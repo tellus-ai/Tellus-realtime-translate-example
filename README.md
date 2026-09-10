@@ -16,9 +16,10 @@ Both apps read `API_KEY` from their local `.env` file and use it in the
 
 ## API contract snapshot (2026-09-10)
 
-이 절은 두 예제가 현재 의존하는 Realtime Speech API 계약을 Swagger에서 옮겨 둔
-스냅샷이다. 서버 문서가 나중에 변경되더라도 예제가 어떤 계약을 기준으로 작성됐는지
-확인하기 위한 것이며, 서버가 제공하는 모든 endpoint를 설명하지는 않는다.
+This section is a snapshot of the Realtime Speech API contract, copied from
+Swagger, that both examples currently depend on. It records the contract the
+examples were built against even if the server documentation changes later. It
+does not describe every endpoint provided by the server.
 
 | Item | Snapshot value |
 | --- | --- |
@@ -32,11 +33,12 @@ Both apps read `API_KEY` from their local `.env` file and use it in the
 
 - HTTP base URL: `https://stgrtsapi.tellus.ai.kr`
 - WebSocket base URL: `wss://stgrtsapi.tellus.ai.kr`
-- 아래 REST endpoint는 `Authorization: Bearer <OAuth access token>`을 요구한다.
-- 아래 두 WebSocket endpoint는 2026-09-10 Swagger 설명 기준으로 Authorization
-  header나 별도 인증 frame을 요구하지 않는다. 활성 `conversation_id`가 연결에 사용된다.
+- The REST endpoints below require `Authorization: Bearer <OAuth access token>`.
+- According to the Swagger documentation as of 2026-09-10, the two WebSocket
+  endpoints below do not require an Authorization header or a separate
+  authentication frame. An active `conversation_id` is used to connect.
 
-REST 응답은 공통으로 다음 envelope를 사용한다.
+REST responses use the following common envelope.
 
 ```json
 {
@@ -48,17 +50,17 @@ REST 응답은 공통으로 다음 envelope를 사용한다.
 
 ### Client call sequence
 
-1. `POST /conversations`로 Conversation을 생성한다.
-2. `POST /conversations/{conversation_id}/interpretation-settings`로 언어와 VAD를 설정한다.
-3. Result WebSocket과 Audio WebSocket을 연결한다.
-4. Audio WebSocket으로 상태 JSON과 PCM16 binary frame을 전송한다.
-5. `POST /conversations/{conversation_id}/end`로 Conversation을 종료한다.
+1. Create a conversation with `POST /conversations`.
+2. Configure languages and VAD with `POST /conversations/{conversation_id}/interpretation-settings`.
+3. Connect the Result WebSocket and Audio WebSocket.
+4. Send status JSON and PCM16 binary frames through the Audio WebSocket.
+5. End the conversation with `POST /conversations/{conversation_id}/end`.
 
 ### REST endpoints
 
 #### `POST /conversations`
 
-OpenAPI operation ID는 `createConversation`이며 성공 status는 `201`이다.
+The OpenAPI operation ID is `createConversation`, and the success status is `201`.
 
 Request:
 
@@ -69,8 +71,8 @@ Request:
 }
 ```
 
-- `max_concurrent_viewers`: 필수 integer, `1..10`
-- `conversation_audio_mode`: `single_speaker` 또는 `multi_speaker`, 기본값
+- `max_concurrent_viewers`: required integer, `1..10`
+- `conversation_audio_mode`: `single_speaker` or `multi_speaker`; defaults to
   `single_speaker`
 
 Success response:
@@ -87,12 +89,13 @@ Success response:
 }
 ```
 
-문서화된 error status는 `401`, `403`, `404`, `410`, `429`, `503`이다.
+The documented error statuses are `401`, `403`, `404`, `410`, `429`, and `503`.
 
 #### `POST /conversations/{conversation_id}/interpretation-settings`
 
-OpenAPI operation ID는 `saveInterpretationSettings`이며 성공 status는 `200`이다.
-현재 Web과 Mobile 예제가 보내는 최소 payload는 다음과 같다.
+The OpenAPI operation ID is `saveInterpretationSettings`, and the success status
+is `200`. The minimum payload currently sent by the Web and Mobile examples is
+shown below.
 
 ```json
 {
@@ -104,17 +107,18 @@ OpenAPI operation ID는 `saveInterpretationSettings`이며 성공 status는 `200
 }
 ```
 
-- `languages`: 필수 BCP 47 language array, 항목 수 `1..2`
-- `transcription.client_vad`: `true`이면 `audio.status.vad.event`가 speech
-  boundary 제어 신호이며, `false`이면 provider VAD가 boundary source다.
-- Swagger 설명에 따라 언어가 두 개면 `translation` object를 보낸다. 현재 예제는
-  기본 translation 설정을 사용하기 위해 빈 object `{}`를 보낸다.
-- OpenAPI JSON Schema의 `required`에는 `languages`만 포함되어 있지만, 현재 예제는
-  더 엄격한 Swagger 설명을 따른다.
-- 선택 가능한 최상위 필드는 `domain_term_annotation_enabled`,
-  `text_to_speech_enabled`, `transcription`, `translation`이다.
+- `languages`: required BCP 47 language array with `1..2` items
+- `transcription.client_vad`: when `true`, `audio.status.vad.event` is the speech
+  boundary control signal; when `false`, the provider VAD is the boundary source.
+- According to the Swagger description, a `translation` object is sent when two
+  languages are configured. The current examples send an empty object, `{}`, to
+  use the default translation settings.
+- Although the OpenAPI JSON Schema lists only `languages` under `required`, the
+  current examples follow the stricter Swagger description.
+- Optional top-level fields are `domain_term_annotation_enabled`,
+  `text_to_speech_enabled`, `transcription`, and `translation`.
 
-Success response의 `data` shape:
+Shape of `data` in a successful response:
 
 ```json
 {
@@ -130,14 +134,16 @@ Success response의 `data` shape:
 }
 ```
 
-문서화된 error status는 `401`, `403`, `404`, `410`, `422`, `429`, `503`이다.
+The documented error statuses are `401`, `403`, `404`, `410`, `422`, `429`, and
+`503`.
 
 #### `POST /conversations/{conversation_id}/end`
 
-OpenAPI operation ID는 `endConversation`이며 성공 status는 `200`이다. OpenAPI에는
-request body가 정의되어 있지 않으며 현재 Web과 Mobile 구현도 body를 보내지 않는다.
+The OpenAPI operation ID is `endConversation`, and the success status is `200`.
+OpenAPI does not define a request body, and the current Web and Mobile
+implementations do not send one.
 
-Success response의 `data` shape:
+Shape of `data` in a successful response:
 
 ```json
 {
@@ -146,7 +152,8 @@ Success response의 `data` shape:
 }
 ```
 
-문서화된 error status는 `401`, `403`, `404`, `410`, `422`, `429`, `503`이다.
+The documented error statuses are `401`, `403`, `404`, `410`, `422`, `429`, and
+`503`.
 
 ### Result WebSocket
 
@@ -156,14 +163,14 @@ Endpoint:
 wss://stgrtsapi.tellus.ai.kr/conversations/{conversation_id}/results
 ```
 
-- `conversation_id` path parameter가 필수다.
-- 연결 성공 시 별도 ready message나 history replay가 없다.
-- 서버는 transcript/translation result, settings control, terminology, TTS 및 error
-  message를 text JSON으로 보낼 수 있다.
-- 현재 예제는 `result`, `conversation.ended`, `system.error`만 직접 처리하며 그 외
-  message는 무시한다.
+- The `conversation_id` path parameter is required.
+- No separate ready message or history replay is sent after a successful connection.
+- The server may send transcript/translation results, settings controls,
+  terminology, TTS, and error messages as text JSON.
+- The current examples directly handle only `result`, `conversation.ended`, and
+  `system.error`; all other messages are ignored.
 
-현재 예제가 사용하는 Result message shape:
+Shape of the Result message used by the current examples:
 
 ```json
 {
@@ -176,7 +183,7 @@ wss://stgrtsapi.tellus.ai.kr/conversations/{conversation_id}/results
     "participant_id": "speaker-1",
     "event_type": "transcript.preview",
     "order_seq": 2,
-    "text": "안녕하세요.",
+    "text": "Hello.",
     "source_language": "ko-KR",
     "target_language": "en-US",
     "start_at": null,
@@ -186,33 +193,35 @@ wss://stgrtsapi.tellus.ai.kr/conversations/{conversation_id}/results
 }
 ```
 
-`data.event_type`은 다음 네 값 중 하나다.
+`data.event_type` is one of the following four values.
 
 - `transcript.preview`
 - `transcript.final`
 - `translation.preview`
 - `translation.final`
 
-같은 발화의 transcript와 translation은 conversation 전체에서 단조 증가하는
-`data.order_seq`로 묶는다. 재연결로 `stream_id`가 바뀌어도 `order_seq`는 초기화되지
-않는다.
+The transcript and translation for the same utterance are associated using
+`data.order_seq`, which increases monotonically across the conversation.
+`order_seq` is not reset even if `stream_id` changes after a reconnection.
 
 ### Audio WebSocket
 
-현재 예제가 사용하는 endpoint:
+Endpoint used by the current examples:
 
 ```text
 wss://stgrtsapi.tellus.ai.kr/audio?conversation_id={conversation_id}&audio_format=pcm16
 ```
 
-- `conversation_id`: 필수 query parameter
-- `audio_format`: 선택 parameter, `pcm16` 또는 `opus`; 서버 기본값은 `opus`이고
-  현재 예제는 명시적으로 `pcm16`을 사용한다.
-- Client에서 Server로 PCM16 binary audio frame과 `audio.status` text JSON을 보낸다.
-- 연결 성공 시 별도 ready message가 없다. 연결 거절 시 Server가 `system.error`를
-  보낸 뒤 socket을 닫을 수 있다.
+- `conversation_id`: required query parameter
+- `audio_format`: optional parameter, either `pcm16` or `opus`; the server
+  defaults to `opus`, while the current examples explicitly use `pcm16`.
+- The client sends PCM16 binary audio frames and `audio.status` text JSON to the
+  server.
+- No separate ready message is sent after a successful connection. If the
+  connection is rejected, the server may send `system.error` and then close the
+  socket.
 
-2026-09-10 Swagger가 문서화한 `audio.status` shape:
+Shape of `audio.status` documented by Swagger as of 2026-09-10:
 
 ```json
 {
@@ -234,43 +243,47 @@ wss://stgrtsapi.tellus.ai.kr/audio?conversation_id={conversation_id}&audio_forma
 }
 ```
 
-- `status_seq`는 단조 증가해야 하며 이전 값이나 중복 값은 boundary 처리에서
-  무시된다.
+- `status_seq` must increase monotonically. Older or duplicate values are ignored
+  during boundary processing.
 - `mic.state`: `disabled`, `idle`, `capturing`, `paused`, `permission_denied`, `error`
-- `vad.event`: `speech_gate_opened` 또는 `speech_gate_closed`; gate가 실제로
-  전환될 때만 보낸다.
-- `client_vad: true`일 때 `speech_gate_opened`는 boundary를 다시 활성화하고
-  `speech_gate_closed`는 provider finalization을 요청한다.
-- Swagger 설명상 `vad.level`, `vad.mode`, `vad.gate`, `vad.is_speech`는 관찰용이며
-  그 값만으로 server boundary가 바뀌지 않는다.
+- `vad.event`: `speech_gate_opened` or `speech_gate_closed`; sent only when the
+  gate actually transitions.
+- When `client_vad: true`, `speech_gate_opened` re-enables the boundary and
+  `speech_gate_closed` requests provider finalization.
+- According to the Swagger description, `vad.level`, `vad.mode`, `vad.gate`, and
+  `vad.is_speech` are observational. Their values alone do not change the server
+  boundary.
 
-WebSocket close code 의미:
+WebSocket close code meanings:
 
 | Code | Meaning |
 | --- | --- |
-| `1008` | 잘못된 요청, 인증 실패, 권한 거부 또는 없는 resource |
-| `1011` | 내부 서버 오류 또는 일시적 사용 불가 |
-| `1013` | 요청 과다 또는 provider rate limit |
+| `1008` | Invalid request, authentication failure, permission denied, or missing resource |
+| `1011` | Internal server error or temporary unavailability |
+| `1013` | Too many requests or provider rate limit |
 
 ### Known Swagger/client differences
 
-서버나 클라이언트를 변경할 때 아래 차이를 먼저 확인해야 한다.
+Check the differences below before changing the server or clients.
 
 | Area | 2026-09-10 Swagger | Current Web/Mobile implementation |
 | --- | --- | --- |
 | Audio status cursor | `sample` | `boundary_sample` |
-| Result end event | Result endpoint 설명에 `conversation.ended` shape가 없음 | `conversation.ended`를 종료 신호로 처리 |
+| Result end event | The Result endpoint description does not include a `conversation.ended` shape | Treats `conversation.ended` as the end signal |
 
-표에 남은 차이는 이번 종료 API body 수정과 별개인 기존 상태다.
+The differences remaining in the table predate and are unrelated to the current
+change to the end API body.
 
 ### Checking for server contract drift
 
-현재 서버 문서의 hash를 다시 계산해 위 snapshot과 비교할 수 있다.
+Recalculate the hash of the current server documentation to compare it with the
+snapshot above.
 
 ```bash
 curl -sS https://stgrtsapi.tellus.ai.kr/openapi.json -o /tmp/tellus-openapi.json
 shasum -a 256 /tmp/tellus-openapi.json
 ```
 
-Hash가 바뀌면 최소한 위 세 REST endpoint의 request/response와 두 WebSocket 설명을
-다시 대조한 뒤 Web과 Mobile의 type check 및 test를 실행한다.
+If the hash changes, compare at least the requests and responses for the three
+REST endpoints above and the descriptions of the two WebSockets, then run the
+type checks and tests for Web and Mobile.
