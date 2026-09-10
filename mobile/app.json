@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Tellus Realtime Translation Example",
+    "slug": "tellus-realtime-translation-example",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "tellus-translation-example",
+    "userInterfaceStyle": "automatic",
+    "plugins": [
+      "expo-router",
+      [
+        "react-native-permissions",
+        {
+          "iosPermissions": ["Microphone"]
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tellus.realtimetranslationexample",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Microphone access is required for realtime translation."
+      }
+    },
+    "android": {
+      "package": "com.tellus.realtimetranslationexample",
+      "permissions": ["android.permission.RECORD_AUDIO"]
+    }
+  }
+}

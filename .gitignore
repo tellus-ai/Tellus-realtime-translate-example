@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+dist/
+dist-android/
+.expo/
+.env.local
+.env
+coverage/
+*.tsbuildinfo
