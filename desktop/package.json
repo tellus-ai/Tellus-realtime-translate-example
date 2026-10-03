@@ -16,13 +16,13 @@
     "start": "electron .",
     "pack": "npm run build && electron-builder --dir --config.mac.identity=null",
     "dist": "npm run build && electron-builder",
-    "test": "node --test scripts/*.test.mjs && vitest run",
+    "test": "TMPDIR=/tmp vitest run",
     "test:live": "node --env-file=.env scripts/live-smoke.mjs",
     "test:engine-auth": "node --env-file=.env scripts/engine-authorization-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --pretty false && tsc -p tsconfig.electron.json --noEmit --pretty false"
   },
   "dependencies": {
-    "@tellus-ai/audio-sdk": "file:vendor/tellus-ai-audio-sdk-0.2.1.tgz"
+    "@tellus-ai/audio-sdk": "git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.2.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
