@@ -5,8 +5,12 @@
   "description": "Electron example for Tellus realtime translation",
   "author": "Tellus",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "main": "dist/electron/main.js",
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "dev": "tsc -p tsconfig.electron.json && node scripts/dev.mjs",
     "build": "npm run typecheck && vite build && tsc -p tsconfig.electron.json && node scripts/write-runtime-env.mjs",
     "start": "electron .",
@@ -14,6 +18,7 @@
     "dist": "npm run build && electron-builder",
     "test": "TMPDIR=/tmp vitest run",
     "test:live": "node --env-file=.env scripts/live-smoke.mjs",
+    "test:engine-auth": "node --env-file=.env scripts/engine-authorization-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --pretty false && tsc -p tsconfig.electron.json --noEmit --pretty false"
   },
   "dependencies": {

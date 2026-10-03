@@ -18,9 +18,10 @@ console.log(`Renderer dev server: ${devServerUrl} (opened inside Electron)`);
 const env = { ...process.env, TELLUS_DESKTOP_DEV_SERVER_URL: devServerUrl };
 // VS Code terminals set this, which would make Electron start as plain Node.js.
 delete env.ELECTRON_RUN_AS_NODE;
-// .npmrc injects these for the engine install; the app itself needs neither.
+// Download credentials are needed only by setup; runtime authorization uses API_KEY.
 delete env.NODE_OPTIONS;
 delete env.TELLUS_AUDIO_ENGINE_TOKEN;
+delete env.TELLUS_AUDIO_DOWNLOAD_BASE_URL;
 
 const electron = spawn(electronPath, ['.'], { cwd: projectRoot, env, stdio: 'inherit' });
 electron.on('exit', async (code) => {

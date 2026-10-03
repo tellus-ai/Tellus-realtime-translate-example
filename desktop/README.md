@@ -10,9 +10,11 @@ REST and WebSocket contracts used by this example.
 
 ## Run
 
+Use Node.js 24. Install with the setup command before running the app:
+
 ```bash
-cp .env.example .env   # set API_KEY and TELLUS_AUDIO_ENGINE_TOKEN
-npm install
+cp .env.example .env   # set TELLUS_AUDIO_ENGINE_TOKEN (installation) and API_KEY (runtime login)
+npm run setup
 npm run dev
 ```
 
@@ -22,11 +24,25 @@ You can also use the development script, which checks `.env` first.
 ./dev.sh
 ```
 
-`npm install` downloads the native engine from a private GitHub release, so it needs
-`TELLUS_AUDIO_ENGINE_TOKEN` (a Tellus-issued GitHub token) in `.env` or in the shell environment. The token
-is used only at install time. npm prepares the SDK git dependency in a temporary clone where its installer
-cannot see this project's `.env`, so `.npmrc` loads the token into the environment first, the same way
-Tellus-client-desktop does.
+`npm run setup` installs SDK **0.2.1** from the GitHub `v0.2.1` tag, with the exact commit recorded
+in `package-lock.json`. The SDK installer uses the existing customer installation token to request
+file-specific download tokens for native engine **0.3.0** and its checksum from
+`TELLUS_AUDIO_DOWNLOAD_BASE_URL` (staging by default), then
+downloads the engine files from `https://download.tellus.ai.kr` and verifies SHA-256. Login and download
+tokens are kept out of package URLs, the lockfile, and logs. A CDN `401` gets one fresh grant and one retry.
+
+The token API must be deployed on the selected Realtime Speech server. Its environment prefix must
+contain the native engine archive for your platform and its `.sha256` file.
+For staging this is `stg/audio/engine/v0.3.0/`. A missing API returns
+`404`; a missing artifact or invalid installation token must be resolved before setup can finish.
+
+`TELLUS_AUDIO_ENGINE_TOKEN` is the existing Tellus-issued customer installation token. Installation
+does not use `API_KEY` or require an app login. `API_KEY` remains the login access token for REST calls
+and engine execution approval at runtime. Installation and execution token renewal are separate.
+Setup loads `.env` and passes both the engine token and download base URL to npm and its child
+processes. This also covers the temporary Git clone where npm prepares the SDK. Setup runs `npm ci`
+against the committed lockfile. A direct `npm install` or `npm ci` requires exporting both
+`TELLUS_AUDIO_ENGINE_TOKEN` and `TELLUS_AUDIO_DOWNLOAD_BASE_URL` in the shell first.
 
 `npm run dev` starts the Vite dev server and opens it inside Electron. Renderer changes hot-reload;
 restart `npm run dev` after changing `electron/` or `.env`. `npm start` runs the last `npm run build`
@@ -62,6 +78,14 @@ The main process owns the whole session; the renderer only draws it.
 - **Audio engine.** `AudioEngine.init()` runs at app start and preloads the Silero model. Each session
   creates a capture with 16 kHz, 20 ms Opus frames at 64 kbps and turns the engine VAD gate on or off with
   `setVadEnabled()`. Denoise is off, matching the Tellus desktop app default.
+- **Execution authorization.** Before capture starts, `attachEngineAuthorization()` sends
+  `audio.authenticate` on the Audio WebSocket and waits for the native engine to accept the signed
+  permit. It sends `engine.renew` at most eight minutes apart, including while paused. Closing the
+  connection invalidates permission and stops capture; reconnect obtains a new permit before capture
+  starts again. Terminal authorization denial stops the session.
+- **Login credentials.** Each REST call and engine authorization request rereads `API_KEY` from the
+  environment/runtime file. Engine permit renewal does not refresh the login JWT itself. Supply a valid
+  login token; a production integration should obtain refreshed credentials from its login service.
 - **VAD boundaries.** The engine marks gate transitions on audio chunks (`gateEvent`). The session sends the
   matching `audio.status` event before the frame it applies to, with `boundary_sample` counted from the start
   of the current Audio WebSocket. A boundary that is open when the session pauses or stops is closed first,
@@ -79,7 +103,8 @@ The main process owns the whole session; the renderer only draws it.
 | `REALTIME_SPEECH_HTTP_URL` | `https://stgrtsapi.tellus.ai.kr` | `http:` is allowed only for localhost |
 | `REALTIME_SPEECH_WS_URL` | `wss://stgrtsapi.tellus.ai.kr` | `ws:` is allowed only for localhost |
 | `API_KEY` | | OAuth access token sent as `Authorization: Bearer <token>` |
-| `TELLUS_AUDIO_ENGINE_TOKEN` | | Install time only: downloads the private native engine |
+| `TELLUS_AUDIO_DOWNLOAD_BASE_URL` | staging HTTP URL | Realtime Speech artifact token API for native engine downloads |
+| `TELLUS_AUDIO_ENGINE_TOKEN` | | Existing Tellus-issued customer installation token; installation only |
 
 During development the main process reads `.env` next to `package.json`. Variables already set in the
 process environment take precedence. Vite does not load `.env` for the renderer (`envDir: false`).
@@ -114,6 +139,17 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+After setup, verify real engine authorization against the endpoints in `.env`:
+
+```bash
+npm run test:engine-auth
+```
+
+This creates and ends its own conversation, verifies native approval and invalid-token rejection,
+and never enables microphone or speaker capture. For a dev-only test, change the three HTTP/WS/download
+base URLs in your ignored `.env` to `https://devrtsapi.tellus.ai.kr` / `wss://devrtsapi.tellus.ai.kr`
+and use a dev login `API_KEY`; the checked-in defaults remain staging.
 
 ## Live Development Server Smoke Test
 

@@ -70,12 +70,17 @@ function startApp(): void {
   // Values already set in the process environment take precedence.
   const envFile = app.isPackaged ? join(__dirname, '../runtime.env') : join(app.getAppPath(), '.env');
   const config = resolveRealtimeSpeechConfig({ ...readEnvFile(envFile), ...process.env });
-  const api = createRealtimeApi(config, (url, init) => net.fetch(url, init));
+  const getAccessToken = () => resolveRealtimeSpeechConfig({ ...readEnvFile(envFile), ...process.env }).accessToken;
+  const api = createRealtimeApi({
+    httpBaseUrl: config.httpBaseUrl,
+    get accessToken() { return getAccessToken(); },
+  }, (url, init) => net.fetch(url, init));
   // REST and both WebSockets run here without an Origin header, like other native clients.
   realtimeSession = new RealtimeTranslationSession(
     { websocketBaseUrl: config.websocketBaseUrl },
     api,
     () => createMicrophoneCapture(requestMicrophoneAccess),
+    getAccessToken,
   );
   realtimeSession.subscribe((snapshot) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(SNAPSHOT_CHANNEL, snapshot);
