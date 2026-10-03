@@ -37,8 +37,9 @@ HTTP operations.
   Creating a Conversation makes the authenticated user its creator; guest
   tokens are rejected. A missing, invalid, or expired token returns `401`:
   refresh the token and retry once.
-- The two WebSockets take no Authorization header, auth frame, or token. The
-  server confirms only that the Conversation is active.
+- The browser/mobile WebSocket flow does not send an Authorization header or auth frame; the
+  server confirms that the Conversation is active. The desktop native engine additionally sends
+  `audio.authenticate` and `engine.renew` on `/audio` to obtain and renew its execution permit.
 - If the web origin is not allowed, a WebSocket closes with `1008` and
   `Permission denied.` Ask Tellus to register your origin.
 

@@ -1,3 +1,8 @@
+import {
+  attachEngineAuthorization,
+  type AuthorizableAudioCapture,
+  type EngineAuthorizationController,
+} from '@tellus-ai/audio-sdk/authorization';
 import type { RealtimeApi } from '../realtimeApi';
 import type { StartConversationInput } from '../shared/desktopApi';
 import type { ClientVadSnapshot, SessionSnapshot, VadEvent, VadGate } from '../shared/realtimeTypes';
@@ -34,7 +39,7 @@ export interface CaptureVadStatus {
 }
 
 /** The parts of the audio engine capture the session drives (`AudioCapture` in @tellus-ai/audio-sdk). */
-export interface MicrophoneCapture {
+export interface MicrophoneCapture extends AuthorizableAudioCapture {
   onError(callback: (error: Error | null, detail: { message: string; recoverable: boolean }) => unknown): void;
   start(callback: (error: Error | null, chunk: CapturedAudioChunk) => unknown): void;
   pause(): void;
@@ -62,6 +67,8 @@ export class RealtimeTranslationSession {
   private resultSocket: WebSocket | null = null;
   private audioSocket: WebSocket | null = null;
   private capture: MicrophoneCapture | null = null;
+  private authorization: EngineAuthorizationController | null = null;
+  private captureStarted = false;
   private reconnectAttempt = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private intentionalClose = false;
@@ -81,6 +88,7 @@ export class RealtimeTranslationSession {
     private readonly endpoints: RealtimeEndpoints,
     private readonly api: RealtimeApi,
     private readonly createCapture: () => Promise<MicrophoneCapture>,
+    private readonly getAccessToken: () => string | Promise<string>,
     private readonly createSocket: (url: string) => WebSocket = (url) => new WebSocket(url),
   ) {}
 
@@ -155,7 +163,7 @@ export class RealtimeTranslationSession {
       this.sendAudioStatus('capturing', this.snapshot.vad);
       this.acceptingAudio = true;
       this.update({ phase: 'recording' });
-      capture.start((error, chunk) => this.handleChunk(capture, error, chunk));
+      this.startCapture();
     } catch (error) {
       if (generation !== this.generation) return;
       this.cleanupLocal();
@@ -206,7 +214,8 @@ export class RealtimeTranslationSession {
       this.sendAudioStatus('capturing', this.snapshot.vad);
       this.update({ phase: 'recording' });
       this.acceptingAudio = true;
-      this.capture?.resume();
+      if (this.captureStarted) this.capture?.resume();
+      else this.startCapture();
     } catch (error) {
       this.acceptingAudio = false;
       this.failActiveSession(error instanceof Error ? error.message : String(error));
@@ -311,6 +320,30 @@ export class RealtimeTranslationSession {
     this.update({ audioConnection: 'open' });
     audioSocket.onclose = (event) => this.handleSocketClose('audio', event);
     audioSocket.onerror = () => this.update({ audioConnection: 'error' });
+    const capture = this.capture;
+    if (!capture) throw new Error('Audio capture is unavailable.');
+    const authorization = attachEngineAuthorization(audioSocket, capture, {
+      conversationId,
+      getAccessToken: this.getAccessToken,
+      onError: (error) => {
+        if (generation === this.generation && audioSocket === this.audioSocket && !this.intentionalClose) {
+          if (['engine_authorization_connection_closed', 'engine_authorization_connection_failed'].includes(error.message)) {
+            this.scheduleReconnect();
+          } else {
+            this.failActiveSession(error.message);
+          }
+        }
+      },
+    });
+    this.authorization = authorization;
+    await authorization.ready;
+  }
+
+  private startCapture(): void {
+    const capture = this.capture;
+    if (!capture) throw new Error('Audio capture is unavailable.');
+    capture.start((error, chunk) => this.handleChunk(capture, error, chunk));
+    this.captureStarted = true;
   }
 
   private waitForOpen(socket: WebSocket): Promise<void> {
@@ -373,12 +406,8 @@ export class RealtimeTranslationSession {
     this.reconnectAttempt += 1;
     this.acceptingAudio = false;
     this.closeSockets();
-    try {
-      this.capture?.pause();
-    } catch (error) {
-      this.failActiveSession(error instanceof Error ? error.message : String(error));
-      return;
-    }
+    // Disposing authorization stops native capture. Reconnect must authorize and start it again.
+    this.engineGate = 'closed';
     this.update({ phase: 'reconnecting', vad: this.idleVadSnapshot() });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -402,12 +431,19 @@ export class RealtimeTranslationSession {
       this.update({ phase: this.desiredPaused ? 'paused' : 'recording', error: null });
       if (!this.desiredPaused) {
         this.acceptingAudio = true;
-        this.capture?.resume();
+        this.startCapture();
       }
     } catch (error) {
       this.acceptingAudio = false;
       if (this.intentionalClose || generation !== this.generation) return;
-      this.update({ error: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith('engine_') && ![
+        'engine_authorization_connection_closed', 'engine_authorization_connection_failed', 'engine_authorization_timeout',
+      ].includes(message)) {
+        this.failActiveSession(message);
+        return;
+      }
+      this.update({ error: message });
       this.scheduleReconnect();
     }
   }
@@ -498,6 +534,9 @@ export class RealtimeTranslationSession {
   }
 
   private closeSockets(): void {
+    this.authorization?.dispose();
+    this.authorization = null;
+    this.captureStarted = false;
     for (const socket of [this.audioSocket, this.resultSocket]) {
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         socket.onclose = null;

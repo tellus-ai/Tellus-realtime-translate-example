@@ -22,12 +22,8 @@ if ! awk -F= '
   exit 1
 fi
 
-if [[ ! -d node_modules/@tellus-ai/audio-sdk/vendor ]]; then
-  if [[ -z "${TELLUS_AUDIO_ENGINE_TOKEN:-}" ]] && ! grep -Eq '^[[:space:]]*TELLUS_AUDIO_ENGINE_TOKEN[[:space:]]*=[[:space:]]*[^[:space:]]' .env; then
-    echo "오류: 오디오 엔진 설치에 TELLUS_AUDIO_ENGINE_TOKEN이 필요합니다. .env 또는 셸 환경변수에 설정해주세요." >&2
-    exit 1
-  fi
-  npm install
+if [[ ! -d node_modules/@tellus-ai/audio-sdk/vendor ]] || ! npm ls @tellus-ai/audio-sdk --depth=0 >/dev/null 2>&1; then
+  npm run setup
 fi
 
 exec npm run dev -- "$@"

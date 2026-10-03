@@ -5,19 +5,24 @@
   "description": "Electron example for Tellus realtime translation",
   "author": "Tellus",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "main": "dist/electron/main.js",
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "dev": "tsc -p tsconfig.electron.json && node scripts/dev.mjs",
     "build": "npm run typecheck && vite build && tsc -p tsconfig.electron.json && node scripts/write-runtime-env.mjs",
     "start": "electron .",
     "pack": "npm run build && electron-builder --dir --config.mac.identity=null",
     "dist": "npm run build && electron-builder",
-    "test": "TMPDIR=/tmp vitest run",
+    "test": "node --test scripts/*.test.mjs && vitest run",
     "test:live": "node --env-file=.env scripts/live-smoke.mjs",
+    "test:engine-auth": "node --env-file=.env scripts/engine-authorization-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --pretty false && tsc -p tsconfig.electron.json --noEmit --pretty false"
   },
   "dependencies": {
-    "@tellus-ai/audio-sdk": "git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.2.1"
+    "@tellus-ai/audio-sdk": "file:vendor/tellus-ai-audio-sdk-0.2.1.tgz"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

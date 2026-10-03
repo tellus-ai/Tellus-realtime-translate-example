@@ -8,3 +8,4 @@ dist-android/
 coverage/
 *.tsbuildinfo
 release/
+desktop/vendor/
