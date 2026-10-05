@@ -18,36 +18,49 @@ import {
   type VadGateEvent,
   type VadRuntime,
 } from '../audio/VADClient';
+import { decideSocketClose, STABLE_CONNECTION_MS, type RealtimeSocket, type SystemError } from './closePolicy';
 import { parseSocketMessage } from './resultParser';
-import { applyResultEvent } from './transcriptReducer';
-import type { SessionSnapshot } from './types';
+import { applyResultEvent, awaitsFinal } from './transcriptReducer';
+import type { ConnectionStatus, SessionSnapshot } from './types';
 
-const RECONNECT_DELAYS = [1_000, 2_000, 5_000, 10_000, 30_000];
 const SOCKET_OPEN_TIMEOUT = 10_000;
+const LAST_FINAL_TIMEOUT = 2_000;
+const CONVERSATION_ENDED_TIMEOUT = 5_000;
 type Listener = (snapshot: SessionSnapshot) => void;
+type Timer = ReturnType<typeof setTimeout>;
 type NativeWebSocketConstructor = new (
   url: string,
   protocols?: string | string[] | null,
   options?: { headers?: Record<string, string> },
 ) => WebSocket;
+/** A socket that is not usable yet: `/audio` before `open`, Result before `participants.snapshot`. */
+interface PendingOpen { timeout: Timer; resolve(usable: boolean): void }
 
 export class RealtimeTranslationSession {
   private snapshot: SessionSnapshot = { phase: 'idle', conversationId: null, resultConnection: 'closed', audioConnection: 'closed', rows: [], error: null, vad: DISABLED_VAD_SNAPSHOT };
   private listeners = new Set<Listener>();
-  private resultSocket: WebSocket | null = null;
-  private audioSocket: WebSocket | null = null;
+  private sockets: Record<RealtimeSocket, WebSocket | null> = { result: null, audio: null };
+  // The server explains an error close with a `system.error` just before it.
+  private lastSocketError: Record<RealtimeSocket, SystemError | null> = { result: null, audio: null };
+  private pendingOpen: Record<RealtimeSocket, PendingOpen | null> = { result: null, audio: null };
+  // Closed sockets that the next reconnect attempt reopens.
+  private socketsToReopen = new Set<RealtimeSocket>();
   private reconnectAttempt = 0;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: Timer | null = null;
+  private reconnectQueue: Promise<void> = Promise.resolve();
+  private reconnectPreparation: Promise<void> | null = null;
+  private stableTimer: Timer | null = null;
+  // True once Stop, a failure, or the end of the Conversation started closing the session.
   private intentionalClose = false;
+  // The `POST /end` that a failure started and that is still running. `stop()` waits for it.
+  private pendingEnd: Promise<void> | null = null;
   private generation = 0;
   private sampleCursor = 0;
   private statusSequence = 0;
   private desiredPaused = false;
-  private reconnectPreparation: Promise<void> | null = null;
   private lifecycleQueue: Promise<void> = Promise.resolve();
   private clientVad = false;
   private lastVadUiUpdate = 0;
-  private failing = false;
   private readonly vadRuntime: VadRuntime;
   private readonly vadPipeline: ClientVadPipeline;
 
@@ -78,7 +91,6 @@ export class RealtimeTranslationSession {
     if (!['idle', 'ended', 'error'].includes(this.snapshot.phase)) return;
     const generation = ++this.generation;
     this.intentionalClose = false;
-    this.failing = false;
     this.reconnectAttempt = 0;
     this.sampleCursor = 0;
     this.statusSequence = 0;
@@ -111,8 +123,11 @@ export class RealtimeTranslationSession {
       await saveInterpretationSettings(this.endpoints, this.accessToken, conversationId, input.sourceLanguage, input.targetLanguage, input.clientVad);
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
-      await this.connectSockets(conversationId, generation, false);
-      if (generation !== this.generation) return;
+      // Result first: `/audio` is opened only after Result is ready. A socket that does not
+      // become usable has already failed the start in `handleSocketClose`.
+      if (!await this.openSocket('result', conversationId) || generation !== this.generation) return;
+      if (!await this.openSocket('audio', conversationId) || generation !== this.generation) return;
+      this.resetAudioStream(false);
       this.sendAudioStatus('capturing');
       this.update({ phase: 'recording' });
       await this.microphone.start(
@@ -123,13 +138,16 @@ export class RealtimeTranslationSession {
           }
         },
       );
-      if (generation !== this.generation) return;
+      // The session ended while the microphone was starting. Nothing else stops it now.
+      if (generation !== this.generation) {
+        await this.microphone.stop().catch(() => {});
+        return;
+      }
+      // Pause or a `/audio` close arrived while the microphone was starting.
+      if (this.snapshot.phase !== 'recording') await this.microphone.pause().catch(() => {});
     } catch (error) {
       if (generation !== this.generation) return;
-      await this.cleanupLocal();
-      const conversationId = this.snapshot.conversationId;
-      if (conversationId) await endConversation(this.endpoints, this.accessToken, conversationId).catch(() => {});
-      this.update({ phase: 'error', resultConnection: 'closed', audioConnection: 'closed', error: error instanceof Error ? error.message : String(error) });
+      this.failActiveSession(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -144,6 +162,8 @@ export class RealtimeTranslationSession {
   }
 
   private async pauseNow(): Promise<void> {
+    // `/audio` is down and the microphone is already paused: `resumeAudio` comes back paused.
+    if (this.snapshot.phase === 'reconnecting') this.desiredPaused = true;
     if (this.snapshot.phase !== 'recording') return;
     const generation = this.generation;
     this.desiredPaused = true;
@@ -191,10 +211,14 @@ export class RealtimeTranslationSession {
   }
 
   private async stopNow(): Promise<void> {
-    if (['idle', 'ended', 'stopping'].includes(this.snapshot.phase)) return;
+    // Nothing to stop, or the session is already closing. A failure can still be ending the
+    // Conversation; the caller gets to wait for that.
+    if (this.intentionalClose || ['idle', 'ended', 'error'].includes(this.snapshot.phase)) {
+      await this.pendingEnd;
+      return;
+    }
     ++this.generation;
     this.intentionalClose = true;
-    this.clearReconnectTimer();
     this.update({ phase: 'stopping' });
     await this.microphone.pause().catch(() => {});
     if (this.clientVad) {
@@ -203,126 +227,212 @@ export class RealtimeTranslationSession {
     }
     this.sendAudioStatus('idle');
     const conversationId = this.snapshot.conversationId;
-    await this.cleanupLocal();
+    // The statuses above make the server finish the last utterance; its finals arrive on Result.
+    await this.waitForSnapshot((snapshot) => snapshot.resultConnection !== 'open' || !snapshot.rows.some(awaitsFinal), LAST_FINAL_TIMEOUT);
+    await this.cleanupLocal({ keepResultSocket: true });
     try {
       if (conversationId && this.accessToken) await endConversation(this.endpoints, this.accessToken, conversationId);
-      this.update({ phase: 'ended', resultConnection: 'closed', audioConnection: 'closed' });
+      // `conversation.ended` and the HTTP response arrive in either order, and results can
+      // still arrive until then. `handleSocketMessage` closes the socket on `conversation.ended`.
+      await this.waitForSnapshot((snapshot) => snapshot.resultConnection !== 'open', CONVERSATION_ENDED_TIMEOUT);
+      this.closeSocket('result');
+      this.update({ phase: 'ended' });
     } catch (error) {
-      this.update({ phase: 'error', resultConnection: 'closed', audioConnection: 'closed', error: error instanceof Error ? error.message : String(error) });
+      this.closeSocket('result');
+      this.update({ phase: 'error', error: error instanceof Error ? error.message : String(error) });
     }
   }
 
-  private async connectSockets(conversationId: string, generation: number, resetVadRuntime = true): Promise<void> {
-    this.update({ resultConnection: 'connecting', audioConnection: 'connecting' });
-    const resultSocket = this.createSocket(buildResultWebSocketUrl(this.endpoints, conversationId));
-    resultSocket.onmessage = (event) => this.handleResultMessage(event.data);
-    await this.waitForOpen(resultSocket);
-    if (generation !== this.generation) { resultSocket.close(); return; }
-    this.resultSocket = resultSocket;
-    this.update({ resultConnection: 'open' });
-    resultSocket.onclose = (event) => this.handleSocketClose('result', event);
-    resultSocket.onerror = () => this.update({ resultConnection: 'error' });
-    const audioSocket = this.createSocket(buildAudioWebSocketUrl(this.endpoints, conversationId));
-    audioSocket.binaryType = 'arraybuffer';
-    await this.waitForOpen(audioSocket);
-    if (generation !== this.generation) { audioSocket.close(); return; }
-    this.audioSocket = audioSocket;
-    this.sampleCursor = 0;
-    if (this.clientVad) {
-      this.vadPipeline.reset(0, resetVadRuntime);
-      this.update({ vad: { ...INITIAL_SILERO_VAD_SNAPSHOT, ready: true } });
-    }
-    this.update({ audioConnection: 'open' });
-    audioSocket.onclose = (event) => this.handleSocketClose('audio', event);
-    audioSocket.onerror = () => this.update({ audioConnection: 'error' });
-  }
-
-  private createSocket(url: string): WebSocket {
-    const NativeWebSocket = WebSocket as unknown as NativeWebSocketConstructor;
-    return new NativeWebSocket(url, null, { headers: { Origin: this.endpoints.appOrigin } });
-  }
-  private waitForOpen(socket: WebSocket): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => { socket.close(); reject(new Error('WebSocket connection timed out.')); }, SOCKET_OPEN_TIMEOUT);
-      socket.onopen = () => { clearTimeout(timeout); resolve(); };
-      socket.onerror = () => { clearTimeout(timeout); reject(new Error('WebSocket connection failed.')); };
+  /** Resolves when the snapshot satisfies `done`, or after `timeoutMs`. */
+  private waitForSnapshot(done: (snapshot: SessionSnapshot) => boolean, timeoutMs: number): Promise<void> {
+    if (done(this.snapshot)) return Promise.resolve();
+    return new Promise((resolve) => {
+      const finish = () => { clearTimeout(timeout); unsubscribe(); resolve(); };
+      const timeout = setTimeout(finish, timeoutMs);
+      const unsubscribe = this.subscribe((snapshot) => { if (done(snapshot)) finish(); });
     });
   }
-  private handleResultMessage(raw: unknown): void {
-    const parsed = parseSocketMessage(raw);
-    if (parsed.kind === 'result') this.update({ rows: applyResultEvent(this.snapshot.rows, parsed.event) });
-    else if (parsed.kind === 'error') this.update({ error: parsed.message });
-    else if (parsed.kind === 'ended') {
-      this.intentionalClose = true;
-      ++this.generation;
-      void this.cleanupLocal().then(() => this.update({ phase: 'ended', resultConnection: 'closed', audioConnection: 'closed' }));
-    }
+
+  /**
+   * Opens a new socket in place of the current one. Resolves `true` once it is usable: `open`
+   * for `/audio`, `participants.snapshot` for Result. Resolves `false` when it closed, timed out,
+   * or was closed by this client first; whoever closed it has already decided what happens next.
+   */
+  private openSocket(kind: RealtimeSocket, conversationId: string): Promise<boolean> {
+    this.closeSocket(kind);
+    this.lastSocketError[kind] = null;
+    const NativeWebSocket = WebSocket as unknown as NativeWebSocketConstructor;
+    const url = kind === 'result' ? buildResultWebSocketUrl(this.endpoints, conversationId) : buildAudioWebSocketUrl(this.endpoints, conversationId);
+    const socket = new NativeWebSocket(url, null, { headers: { Origin: this.endpoints.appOrigin } });
+    if (kind === 'audio') socket.binaryType = 'arraybuffer';
+    this.sockets[kind] = socket;
+    this.setConnection(kind, 'connecting');
+    // Every handler is attached before `open`: the server accepts a connection first and can
+    // reject it right after with `system.error` and a close.
+    socket.onopen = () => {
+      this.setConnection(kind, 'open');
+      if (kind === 'audio') this.settleOpen(kind, true);
+    };
+    socket.onmessage = (event) => this.handleSocketMessage(kind, event.data);
+    socket.onerror = () => this.setConnection(kind, 'error');
+    // A React Native close event can lack the code (0 or undefined) or the reason. That is
+    // handled like a connection lost without a close frame.
+    socket.onclose = (event) => this.handleSocketClose(kind, typeof event.code === 'number' && event.code > 0 ? event.code : 1006, typeof event.reason === 'string' ? event.reason : '');
+    return new Promise((resolve) => {
+      // No answer in time is handled like a connection lost without a close frame.
+      const timeout = setTimeout(() => this.handleSocketClose(kind, 1006, ''), SOCKET_OPEN_TIMEOUT);
+      this.pendingOpen[kind] = { timeout, resolve };
+    });
   }
-  private handleSocketClose(kind: 'result' | 'audio', event: { code?: number; reason?: string }): void {
-    this.update(kind === 'result' ? { resultConnection: 'closed' } : { audioConnection: 'closed' });
-    if (this.intentionalClose || !['recording', 'paused', 'reconnecting'].includes(this.snapshot.phase)) return;
-    if (event.code === 1000 || event.code === 1008) {
-      this.failActiveSession(event.reason || `WebSocket closed. (${event.code})`);
+  private settleOpen(kind: RealtimeSocket, usable: boolean): void {
+    const pending = this.pendingOpen[kind];
+    if (!pending) return;
+    this.pendingOpen[kind] = null;
+    clearTimeout(pending.timeout);
+    if (usable) this.socketsToReopen.delete(kind);
+    pending.resolve(usable);
+  }
+  /** Detaches the handlers first, so a late event from this socket cannot touch its replacement. */
+  private closeSocket(kind: RealtimeSocket): void {
+    const socket = this.sockets[kind];
+    if (!socket) return;
+    this.sockets[kind] = null;
+    this.settleOpen(kind, false);
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close(1000);
+    this.setConnection(kind, 'closed');
+  }
+  private setConnection(kind: RealtimeSocket, status: ConnectionStatus): void {
+    this.update(kind === 'result' ? { resultConnection: status } : { audioConnection: status });
+  }
+  private handleSocketMessage(kind: RealtimeSocket, raw: unknown): void {
+    const parsed = parseSocketMessage(raw);
+    if (parsed.kind === 'system-error') {
+      // Not shown yet: the close that follows decides whether this ends the session.
+      this.lastSocketError[kind] = parsed.error;
       return;
     }
-    this.scheduleReconnect();
+    // The server sends nothing else on `/audio`.
+    if (kind === 'audio') return;
+    if (parsed.kind === 'ready') this.settleOpen('result', true);
+    else if (parsed.kind === 'result') this.update({ rows: applyResultEvent(this.snapshot.rows, parsed.event) });
+    else if (parsed.kind === 'error') this.update({ error: parsed.message });
+    else if (parsed.kind === 'ended') {
+      // After Stop this is the answer to this client's own `POST /end`, and `stopNow` goes on.
+      if (this.intentionalClose) this.closeSocket('result');
+      else this.finishEnded();
+    }
   }
-  private scheduleReconnect(): void {
-    if (this.intentionalClose || this.reconnectTimer || !this.snapshot.conversationId) return;
-    const delay = RECONNECT_DELAYS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS.length - 1)];
+  /** Handles a close that this client did not start. `closeSocket` detaches its own closes. */
+  private handleSocketClose(kind: RealtimeSocket, code: number, reason: string): void {
+    const lastError = this.lastSocketError[kind];
+    this.closeSocket(kind);
+    if (this.intentionalClose) return;
+    const decision = decideSocketClose({ code, reason, lastError, attempt: this.reconnectAttempt });
+    if (decision.action === 'fail') this.failActiveSession(decision.message, decision.endConversation);
+    else if (this.snapshot.phase === 'connecting') {
+      // Nothing is running yet that a reconnect could resume, so any close fails the start.
+      // A Conversation that the server reports as ended needs no `POST /end`.
+      const cause = `${kind} closed: ${code} ${decision.reason ?? ''}`.trimEnd();
+      this.failActiveSession(`The realtime connection closed while starting. (${cause})`, decision.action === 'reconnect');
+    } else if (decision.action === 'ended') this.finishEnded();
+    else this.scheduleReconnect(kind, decision.delayMs);
+  }
+  private scheduleReconnect(kind: RealtimeSocket, delayMs: number): void {
+    this.clearStableTimer();
+    this.socketsToReopen.add(kind);
+    if (kind === 'audio') this.suspendAudio();
+    // An attempt that is already waiting reopens this socket as well.
+    if (this.reconnectTimer !== null) return;
     this.reconnectAttempt += 1;
+    this.reconnectTimer = setTimeout(() => this.reconnectNow(), delayMs);
+  }
+  /** Recording continues while only Result is down, but not without `/audio`. */
+  private suspendAudio(): void {
     this.update({ phase: 'reconnecting' });
-    this.reconnectPreparation = this.prepareForReconnect();
-    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; void this.reconnect(); }, delay);
+    this.reconnectPreparation ??= this.prepareForReconnect().catch((error) => {
+      this.failActiveSession(error instanceof Error ? error.message : String(error));
+    });
+  }
+  private async prepareForReconnect(): Promise<void> {
+    await this.microphone.pause().catch(() => {});
+    if (this.intentionalClose || !this.clientVad) return;
+    // The stream is discontinuous. Cancel queued inference rather than attaching old PCM to the new socket.
+    this.vadPipeline.reset(0);
+    this.update({ vad: { ...INITIAL_SILERO_VAD_SNAPSHOT, ready: true } });
+  }
+  private reconnectNow(): void {
+    this.clearReconnectTimer();
+    // One attempt at a time: a later one must not replace a socket that an earlier one is
+    // still opening.
+    this.reconnectQueue = this.reconnectQueue
+      .then(() => this.reconnect())
+      .catch((error) => this.failActiveSession(error instanceof Error ? error.message : String(error)));
   }
   private async reconnect(): Promise<void> {
     const conversationId = this.snapshot.conversationId;
-    if (!conversationId || this.intentionalClose) return;
-    const generation = ++this.generation;
-    await this.reconnectPreparation?.catch(() => {});
-    this.reconnectPreparation = null;
-    if (this.intentionalClose || generation !== this.generation) return;
-    this.closeSockets();
-    try {
-      await this.connectSockets(conversationId, generation);
-      if (this.intentionalClose || generation !== this.generation) {
-        this.closeSockets();
-        return;
-      }
-      this.reconnectAttempt = 0;
-      this.sendAudioStatus(this.desiredPaused ? 'paused' : 'capturing');
-      this.update({ phase: this.desiredPaused ? 'paused' : 'recording', error: null });
-      if (!this.desiredPaused) {
-        await this.microphone.resume();
-        if (this.intentionalClose || generation !== this.generation || this.snapshot.phase !== 'recording') {
-          await this.microphone.pause().catch(() => {});
-        }
-      }
-    } catch (error) {
-      if (this.intentionalClose || generation !== this.generation) return;
-      this.update({ error: error instanceof Error ? error.message : String(error) });
-      this.scheduleReconnect();
+    const generation = this.generation;
+    // True when the session is closing, or when a close during this attempt has scheduled the
+    // next one. That attempt reopens whatever is still closed, after its own delay.
+    const superseded = () => this.intentionalClose || generation !== this.generation || this.reconnectTimer !== null;
+    if (!conversationId || superseded() || this.socketsToReopen.size === 0) return;
+    // Result first: `/audio` is opened only after Result is ready.
+    if (this.socketsToReopen.has('result')) {
+      if (!await this.openSocket('result', conversationId) || superseded()) return;
     }
+    if (this.socketsToReopen.has('audio')) {
+      await this.reconnectPreparation;
+      if (superseded()) return;
+      this.reconnectPreparation = null;
+      this.resetAudioStream();
+      if (!await this.openSocket('audio', conversationId)) return;
+      await this.resumeAudio(generation);
+    }
+    if (superseded() || this.socketsToReopen.size > 0) return;
+    // The server can close a socket right after accepting it, so the backoff starts over only
+    // after both sockets stayed open for a while.
+    this.stableTimer = setTimeout(() => { this.stableTimer = null; this.reconnectAttempt = 0; }, STABLE_CONNECTION_MS);
+  }
+  /** A new `/audio` socket counts samples from 0 again, with a closed VAD gate. */
+  private resetAudioStream(resetVadRuntime = true): void {
+    this.sampleCursor = 0;
+    if (!this.clientVad) return;
+    this.vadPipeline.reset(0, resetVadRuntime);
+    this.update({ vad: { ...INITIAL_SILERO_VAD_SNAPSHOT, ready: true } });
+  }
+  private async resumeAudio(generation: number): Promise<void> {
+    // The socket that just opened can already be closed again.
+    if (this.intentionalClose || generation !== this.generation || this.socketsToReopen.has('audio')) return;
+    // The status goes out before any audio on the new socket.
+    this.sendAudioStatus(this.desiredPaused ? 'paused' : 'capturing');
+    this.update({ phase: this.desiredPaused ? 'paused' : 'recording' });
+    if (this.desiredPaused) return;
+    await this.microphone.resume();
+    // Stop, Pause, or another close arrived while the microphone was resuming.
+    if (this.intentionalClose || generation !== this.generation || this.snapshot.phase !== 'recording') await this.microphone.pause().catch(() => {});
   }
   private handleAudioFrame(frame: PcmAudioFrame): void {
-    if (this.snapshot.phase !== 'recording' || this.audioSocket?.readyState !== WebSocket.OPEN) return;
+    if (this.snapshot.phase !== 'recording' || this.sockets.audio?.readyState !== WebSocket.OPEN) return;
     if (this.clientVad) this.vadPipeline.enqueue(frame);
     else this.sendAudioFrame(frame.pcm16, frame.sampleCount);
   }
   private sendAudioFrame(frame: ArrayBuffer, sampleCount: number): void {
-    if (this.snapshot.phase !== 'recording' || this.audioSocket?.readyState !== WebSocket.OPEN) return;
-    this.audioSocket.send(frame);
+    if (this.snapshot.phase !== 'recording' || this.sockets.audio?.readyState !== WebSocket.OPEN) return;
+    this.sockets.audio.send(frame);
     this.sampleCursor += sampleCount;
   }
   private sendVadAudioFrame(frame: PcmAudioFrame, decision: VadDecision, sampleStart: number): void {
-    if (!['recording', 'stopping'].includes(this.snapshot.phase) || this.audioSocket?.readyState !== WebSocket.OPEN) return;
+    if (!['recording', 'stopping'].includes(this.snapshot.phase) || this.sockets.audio?.readyState !== WebSocket.OPEN) return;
     if (sampleStart !== this.sampleCursor) {
       this.failActiveSession('VAD audio sample cursor mismatch.');
       return;
     }
     if (decision.event) this.sendAudioStatus('capturing', decision, decision.event, sampleStart);
-    if (this.audioSocket?.readyState !== WebSocket.OPEN || !['recording', 'stopping'].includes(this.snapshot.phase)) return;
-    this.audioSocket.send(frame.pcm16);
+    if (this.sockets.audio?.readyState !== WebSocket.OPEN || !['recording', 'stopping'].includes(this.snapshot.phase)) return;
+    this.sockets.audio.send(frame.pcm16);
     this.sampleCursor = sampleStart + frame.sampleCount;
   }
   private sendAudioStatus(
@@ -331,19 +441,25 @@ export class RealtimeTranslationSession {
     event?: VadGateEvent,
     sample = this.sampleCursor,
   ): void {
-    if (this.audioSocket?.readyState !== WebSocket.OPEN) return;
+    if (this.sockets.audio?.readyState !== WebSocket.OPEN) return;
     this.statusSequence += 1;
     const vad = {
       enabled: decision?.enabled ?? this.clientVad,
       ...(event ? { event } : {}),
     };
-    this.audioSocket.send(JSON.stringify({ type: 'audio.status', version: 1, status_seq: this.statusSequence, boundary_sample: sample, mic: { state }, vad }));
+    this.sockets.audio.send(JSON.stringify({ type: 'audio.status', version: 1, status_seq: this.statusSequence, boundary_sample: sample, mic: { state }, vad }));
   }
-  private async cleanupLocal(): Promise<void> {
+  /** Stop keeps the Result socket for the last results and `conversation.ended`. */
+  private async cleanupLocal({ keepResultSocket = false } = {}): Promise<void> {
     this.clearReconnectTimer();
+    this.clearStableTimer();
+    this.socketsToReopen.clear();
+    this.reconnectPreparation = null;
+    // The sockets go first, so that no event arrives while the rest is released.
+    this.closeSocket('audio');
+    if (!keepResultSocket) this.closeSocket('result');
     this.vadPipeline.reset(this.sampleCursor);
     await this.microphone.stop().catch(() => {});
-    this.closeSockets();
     await this.vadPipeline.drain().catch(() => {});
     if (this.clientVad) await this.vadRuntime.dispose().catch(() => {});
   }
@@ -351,18 +467,6 @@ export class RealtimeTranslationSession {
     const result = this.lifecycleQueue.then(operation);
     this.lifecycleQueue = result.catch(() => {});
     return result;
-  }
-  private async prepareForReconnect(): Promise<void> {
-    await this.microphone.pause().catch(() => {});
-    if (this.clientVad) {
-      if (this.audioSocket?.readyState === WebSocket.OPEN) {
-        this.closeOpenVadGate('capturing');
-        this.sendAudioStatus('paused');
-      }
-      // The stream is discontinuous. Cancel queued inference rather than attaching old PCM to the new socket.
-      this.vadPipeline.reset(0);
-      this.update({ vad: { ...INITIAL_SILERO_VAD_SNAPSHOT, ready: true } });
-    }
   }
   private closeOpenVadGate(micState: 'capturing' | 'paused'): void {
     if (!this.clientVad || this.snapshot.vad.gate !== 'open') return;
@@ -378,32 +482,35 @@ export class RealtimeTranslationSession {
     this.sendAudioStatus(micState, decision, decision.event, this.sampleCursor);
     this.updateVadSnapshot(decision);
   }
-  private failActiveSession(message: string): void {
-    if (this.failing) return;
-    this.failing = true;
+  /** The server reported the end of the Conversation, so there is nothing left for `POST /end`. */
+  private finishEnded(): void {
+    this.intentionalClose = true;
+    ++this.generation;
+    void this.cleanupLocal().then(() => this.update({ phase: 'ended', error: null }));
+  }
+  private failActiveSession(message: string, shouldEndConversation = true): void {
+    if (this.intentionalClose) return;
     this.intentionalClose = true;
     ++this.generation;
     const conversationId = this.snapshot.conversationId;
-    void this.cleanupLocal().then(async () => {
-      if (conversationId && this.accessToken) {
-        await endConversation(this.endpoints, this.accessToken, conversationId).catch(() => {});
-      }
-      this.update({ phase: 'error', resultConnection: 'closed', audioConnection: 'closed', error: message });
+    void this.cleanupLocal().then(() => {
+      // The error shows once everything is released. `POST /end` can take several retries, so it
+      // runs in the background.
+      this.update({ phase: 'error', error: message });
+      if (!shouldEndConversation || !conversationId || !this.accessToken) return;
+      const pendingEnd: Promise<void> = endConversation(this.endpoints, this.accessToken, conversationId)
+        .catch(() => {})
+        .finally(() => { if (this.pendingEnd === pendingEnd) this.pendingEnd = null; });
+      this.pendingEnd = pendingEnd;
     });
   }
-  private closeSockets(): void {
-    for (const socket of [this.audioSocket, this.resultSocket]) {
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-        socket.onclose = null;
-        socket.close(1000);
-      }
-    }
-    this.audioSocket = null;
-    this.resultSocket = null;
-  }
   private clearReconnectTimer(): void {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+  }
+  private clearStableTimer(): void {
+    if (this.stableTimer !== null) clearTimeout(this.stableTimer);
+    this.stableTimer = null;
   }
   private updateVadSnapshot(decision: VadDecision): void {
     const now = Date.now();
