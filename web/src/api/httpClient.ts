@@ -1,6 +1,7 @@
 export class RealtimeApiError extends Error {
   constructor(
     message: string,
+    /** The HTTP status, or null when no response arrived. */
     readonly status: number | null,
     readonly messages: string[] = [message],
   ) {
@@ -34,29 +35,71 @@ function unwrapEnvelope<T>(value: unknown): T {
   return value as T;
 }
 
+const REQUEST_TIMEOUT_MS = 15_000;
+// REST error responses carry no Retry-After header, so temporary failures use fixed waits.
+const RETRY_DELAYS_MS = [1_000, 2_000, 5_000];
+
+export interface RequestOptions {
+  /**
+   * Also retry when no response arrives, which includes a request that ran into
+   * REQUEST_TIMEOUT_MS. Only for requests that are safe to repeat: a create request may have
+   * succeeded on the server even though its response was lost.
+   */
+  retryNetworkFailure?: boolean;
+}
+
+/** Sends the request again after a 503, up to three more times. Other statuses are not retried. */
 export async function requestJson<T>(
   url: string,
   accessToken: string,
   init: RequestInit,
+  { retryNetworkFailure = false }: RequestOptions = {},
 ): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await requestOnce<T>(url, accessToken, init);
+    } catch (error) {
+      const status = error instanceof RealtimeApiError ? error.status : undefined;
+      const temporary = status === 503 || (status === null && retryNetworkFailure);
+      if (!temporary || attempt >= RETRY_DELAYS_MS.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
+async function requestOnce<T>(
+  url: string,
+  accessToken: string,
+  init: RequestInit,
+): Promise<T> {
+  // Without a time limit a request can stay pending forever, and Stop waits for `POST /end`.
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(new DOMException('The request timed out.', 'TimeoutError')),
+    REQUEST_TIMEOUT_MS,
+  );
   let response: Response;
+  let raw: string;
   try {
     response = await fetch(url, {
       ...init,
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken.trim()}`,
         ...init.headers,
       },
     });
+    raw = await response.text();
   } catch (error) {
     throw new RealtimeApiError(
       error instanceof Error ? error.message : 'Network request failed.',
       null,
     );
+  } finally {
+    clearTimeout(timeout);
   }
 
-  const raw = await response.text();
   let body: unknown = null;
   if (raw) {
     try {
