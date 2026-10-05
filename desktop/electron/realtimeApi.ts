@@ -1,12 +1,15 @@
 import type { DesktopError, StartConversationInput } from './shared/desktopApi';
 
 const REQUEST_TIMEOUT_MS = 15_000;
+// REST error responses carry no Retry-After header, so temporary failures use fixed waits.
+const RETRY_DELAYS_MS = [1_000, 2_000, 5_000];
 
 export type FetchFunction = (url: string, init: RequestInit) => Promise<Response>;
 
 export class RealtimeApiError extends Error {
   constructor(
     message: string,
+    /** The HTTP status, or null when no response arrived. */
     readonly status: number | null,
     readonly messages: string[] = [message],
   ) {
@@ -18,6 +21,7 @@ export class RealtimeApiError extends Error {
 export interface RealtimeApi {
   createConversation(): Promise<string>;
   saveInterpretationSettings(conversationId: string, input: StartConversationInput): Promise<void>;
+  /** Resolves once the Conversation is over, whether or not this call was the one that ended it. */
   endConversation(conversationId: string): Promise<void>;
 }
 
@@ -31,18 +35,26 @@ interface ConversationResponse {
   conversation_id?: string;
 }
 
+interface RequestOptions {
+  /**
+   * Also retry when no response arrives. Only for requests that are safe to repeat: a create
+   * request may have succeeded on the server even though its response was lost.
+   */
+  retryNetworkFailure?: boolean;
+}
+
 export function createRealtimeApi(
   config: { httpBaseUrl: string; accessToken: string },
   fetchFunction: FetchFunction,
 ): RealtimeApi {
-  const post = <T>(path: string, body?: unknown): Promise<T> => {
+  const post = <T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> => {
     if (!config.accessToken) {
       return Promise.reject(new RealtimeApiError('Set API_KEY in desktop/.env and restart the app.', null));
     }
     return requestJson<T>(fetchFunction, `${config.httpBaseUrl}${path}`, config.accessToken, {
       method: 'POST',
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    }, options);
   };
 
   return {
@@ -66,7 +78,15 @@ export function createRealtimeApi(
     },
 
     async endConversation(conversationId) {
-      await post(`/conversations/${encodeURIComponent(conversationId)}/end`);
+      try {
+        await post(`/conversations/${encodeURIComponent(conversationId)}/end`, undefined, {
+          retryNetworkFailure: true,
+        });
+      } catch (error) {
+        // 410: already ended. 404: gone or expired, so it can no longer be ended.
+        if (error instanceof RealtimeApiError && (error.status === 410 || error.status === 404)) return;
+        throw error;
+      }
     },
   };
 }
@@ -79,7 +99,28 @@ export function toDesktopError(error: unknown): DesktopError {
   return { message, status: null, messages: [message] };
 }
 
+/** Sends the request again after a 503, up to three more times. Other statuses are not retried. */
 async function requestJson<T>(
+  fetchFunction: FetchFunction,
+  url: string,
+  accessToken: string,
+  init: RequestInit,
+  { retryNetworkFailure = false }: RequestOptions = {},
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await requestOnce<T>(fetchFunction, url, accessToken, init);
+    } catch (error) {
+      const status = error instanceof RealtimeApiError ? error.status : undefined;
+      // No response includes a request that ran into REQUEST_TIMEOUT_MS.
+      const temporary = status === 503 || (status === null && retryNetworkFailure);
+      if (!temporary || attempt >= RETRY_DELAYS_MS.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
+async function requestOnce<T>(
   fetchFunction: FetchFunction,
   url: string,
   accessToken: string,
