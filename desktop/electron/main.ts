@@ -50,12 +50,14 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', (event) => {
-    if (stoppingBeforeQuit || !realtimeSession?.isActive()) return;
+    // A session that failed can still be ending its conversation; `stop()` waits for that as well.
+    if (stoppingBeforeQuit || !(realtimeSession?.isActive() || realtimeSession?.hasPendingEnd())) return;
     // Stop the session so the conversation is ended on the server before the process exits.
     event.preventDefault();
     stoppingBeforeQuit = true;
     void Promise.race([
-      realtimeSession.stop(),
+      // Nobody is left to read the last results, so quitting goes straight to `POST /end`.
+      realtimeSession.stop({ waitForResults: false }),
       new Promise((resolve) => setTimeout(resolve, STOP_ON_QUIT_TIMEOUT_MS)),
     ]).finally(() => app.quit());
   });
@@ -76,6 +78,7 @@ function startApp(): void {
     get accessToken() { return getAccessToken(); },
   }, (url, init) => net.fetch(url, init));
   // REST and both WebSockets run here without an Origin header, like other native clients.
+  // The session opens its WebSockets with the `ws` package (realtime/nodeWebSocket.ts).
   realtimeSession = new RealtimeTranslationSession(
     { websocketBaseUrl: config.websocketBaseUrl },
     api,

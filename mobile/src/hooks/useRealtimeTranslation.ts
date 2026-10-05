@@ -21,7 +21,7 @@ export function useRealtimeTranslation() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState !== 'active' && session.getSnapshot().phase === 'recording') {
+      if (nextState !== 'active' && ['recording', 'reconnecting'].includes(session.getSnapshot().phase)) {
         void session.pause();
       }
     });

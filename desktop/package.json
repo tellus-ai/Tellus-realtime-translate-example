@@ -22,12 +22,14 @@
     "typecheck": "tsc -p tsconfig.json --pretty false && tsc -p tsconfig.electron.json --noEmit --pretty false"
   },
   "dependencies": {
-    "@tellus-ai/audio-sdk": "git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.2.2"
+    "@tellus-ai/audio-sdk": "git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.2.2",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.1.1",
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
@@ -35,8 +37,7 @@
     "react-dom": "^19.2.8",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
-    "vitest": "^5.0.0",
-    "ws": "^8.21.3"
+    "vitest": "^5.0.0"
   },
   "build": {
     "appId": "kr.ai.tellus.realtime-translation-example",

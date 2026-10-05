@@ -1,4 +1,5 @@
 import type { ResultEvent, ResultEventType } from '../shared/realtimeTypes';
+import type { SystemError } from './closePolicy';
 
 const EVENT_TYPES = new Set<ResultEventType>([
   'transcript.preview',
@@ -13,7 +14,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export type ParsedSocketMessage =
   | { kind: 'result'; event: ResultEvent }
+  /** `participants.snapshot`: the first message on the Result WebSocket. */
+  | { kind: 'ready' }
   | { kind: 'ended' }
+  | { kind: 'system-error'; error: SystemError }
   | { kind: 'error'; message: string }
   | { kind: 'ignored' };
 
@@ -27,12 +31,27 @@ export function parseSocketMessage(raw: unknown): ParsedSocketMessage {
     }
   }
   if (!isRecord(payload)) return { kind: 'ignored' };
+  if (payload.type === 'participants.snapshot') return { kind: 'ready' };
   if (payload.type === 'conversation.ended') return { kind: 'ended' };
   if (payload.type === 'system.error') {
     const messages = Array.isArray(payload.message)
       ? payload.message.filter((item): item is string => typeof item === 'string')
       : [];
-    return { kind: 'error', message: messages[0] ?? 'Realtime connection error.' };
+    const data = isRecord(payload.data) ? payload.data : {};
+    const code = Number.parseInt(String(payload.statusCode), 10);
+    const retryAfterMs = data.retry_after_ms;
+    return {
+      kind: 'system-error',
+      error: {
+        code: Number.isNaN(code) ? null : code,
+        reason: typeof data.reason === 'string' ? data.reason : null,
+        message: messages[0] ?? 'Realtime connection error.',
+        retryAfterMs:
+          typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+            ? retryAfterMs
+            : null,
+      },
+    };
   }
   if (payload.type !== 'result' || !isRecord(payload.data)) return { kind: 'ignored' };
 

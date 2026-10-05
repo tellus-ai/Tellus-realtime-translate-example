@@ -34,7 +34,7 @@ describe('RealtimeTranslationSession client VAD wire ordering', () => {
     const internal = session as any;
     internal.clientVad = true;
     internal.snapshot = { ...session.getSnapshot(), phase: 'recording' };
-    internal.audioSocket = { readyState: WebSocket.OPEN, send: (value: unknown) => sent.push(value) };
+    internal.sockets.audio = { readyState: WebSocket.OPEN, send: (value: unknown) => sent.push(value) };
 
     const opened: VadDecision = {
       enabled: true,
@@ -79,7 +79,7 @@ describe('RealtimeTranslationSession client VAD wire ordering', () => {
       );
       const internal = session as any;
       internal.clientVad = false;
-      internal.audioSocket = { readyState: WebSocket.OPEN, send: (value: unknown) => sent.push(value) };
+      internal.sockets.audio = { readyState: WebSocket.OPEN, send: (value: unknown) => sent.push(value) };
 
       internal.sendAudioStatus(state);
 

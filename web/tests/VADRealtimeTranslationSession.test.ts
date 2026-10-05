@@ -86,7 +86,12 @@ class FakeWebSocket {
     queueMicrotask(() => {
       this.readyState = FakeWebSocket.OPEN;
       this.onopen?.(new Event('open'));
+      if (url.endsWith('/results')) this.receive({ type: 'participants.snapshot', data: {} });
     });
+  }
+
+  receive(message: object): void {
+    this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
   }
 
   send(data: string | ArrayBuffer): void {
@@ -106,14 +111,22 @@ describe('RealtimeTranslationSession audio pipeline', () => {
   beforeEach(() => {
     FakeWebSocket.instances = [];
     let requestIndex = 0;
-    fetchMock = vi.fn(async () => {
+    fetchMock = vi.fn(async (url: string) => {
       const body = requestIndex === 0 ? { conversation_id: 'conversation-1' } : {};
       requestIndex += 1;
+      // Like the server, answer POST /end with conversation.ended on the Result WebSocket.
+      if (url.endsWith('/end')) FakeWebSocket.instances[0]?.receive({ type: 'conversation.ended' });
       return new Response(JSON.stringify(body), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('WebSocket', FakeWebSocket);
-    vi.stubGlobal('window', { setTimeout, clearTimeout, location: new URL('https://app.test/') });
+    vi.stubGlobal('window', {
+      setTimeout,
+      clearTimeout,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      location: new URL('https://app.test/'),
+    });
   });
 
   afterEach(() => vi.unstubAllGlobals());

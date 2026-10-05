@@ -1,4 +1,4 @@
-import { requestJson } from './httpClient';
+import { RealtimeApiError, requestJson } from './httpClient';
 
 export interface RealtimeEndpoints {
   httpBaseUrl: string;
@@ -36,16 +36,24 @@ export async function saveInterpretationSettings(
   );
 }
 
+/** Resolves once the Conversation is over, whether or not this call was the one that ended it. */
 export async function endConversation(
   endpoints: RealtimeEndpoints,
   accessToken: string,
   conversationId: string,
 ): Promise<void> {
-  await requestJson(
-    `${endpoints.httpBaseUrl}/conversations/${encodeURIComponent(conversationId)}/end`,
-    accessToken,
-    { method: 'POST' },
-  );
+  try {
+    await requestJson(
+      `${endpoints.httpBaseUrl}/conversations/${encodeURIComponent(conversationId)}/end`,
+      accessToken,
+      { method: 'POST' },
+      { retryNetworkFailure: true },
+    );
+  } catch (error) {
+    // 410: already ended. 404: gone or expired, so it can no longer be ended.
+    if (error instanceof RealtimeApiError && (error.status === 410 || error.status === 404)) return;
+    throw error;
+  }
 }
 
 export function buildResultWebSocketUrl(endpoints: RealtimeEndpoints, conversationId: string): string {
