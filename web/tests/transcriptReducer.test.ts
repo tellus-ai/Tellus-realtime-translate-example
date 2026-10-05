@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyResultEvent } from '../src/realtime/transcriptReducer';
+import { applyResultEvent, awaitsFinal } from '../src/realtime/transcriptReducer';
 import type { ResultEvent } from '../src/realtime/types';
 
 function event(overrides: Partial<ResultEvent>): ResultEvent {
@@ -33,6 +33,25 @@ describe('applyResultEvent', () => {
     }));
     expect(rows.map((row) => row.orderSeq)).toEqual([1, 2]);
     expect(rows[0]?.translations['en-US']).toEqual({ text: 'First', isFinal: true });
+  });
+});
+
+describe('awaitsFinal', () => {
+  const row = (rows: ReturnType<typeof applyResultEvent>) => rows[0]!;
+
+  it('is true until the transcript and every translation are final', () => {
+    let rows = applyResultEvent([], event({ text: '안녕' }));
+    expect(awaitsFinal(row(rows))).toBe(true);
+
+    rows = applyResultEvent(rows, event({ eventType: 'transcript.final', text: '안녕하세요.' }));
+    expect(awaitsFinal(row(rows))).toBe(true);
+
+    const translation = { text: 'Hello.', targetLanguage: 'en-US' };
+    rows = applyResultEvent(rows, event({ ...translation, eventType: 'translation.preview' }));
+    expect(awaitsFinal(row(rows))).toBe(true);
+
+    rows = applyResultEvent(rows, event({ ...translation, eventType: 'translation.final' }));
+    expect(awaitsFinal(row(rows))).toBe(false);
   });
 });
 

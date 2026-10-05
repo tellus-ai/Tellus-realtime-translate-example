@@ -45,3 +45,9 @@ export function applyResultEvent(
   );
 }
 
+/** True while a row still expects a final transcript or a final translation. */
+export function awaitsFinal(row: TranslationRow): boolean {
+  const translations = Object.values(row.translations);
+  return !row.source?.isFinal || translations.length === 0 || translations.some((item) => !item.isFinal);
+}
+
