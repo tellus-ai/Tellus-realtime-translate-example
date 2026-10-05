@@ -24,16 +24,16 @@ You can also use the development script, which checks `.env` first.
 ./dev.sh
 ```
 
-`npm run setup` installs SDK **0.2.1** from the GitHub `v0.2.1` tag, with the exact commit recorded
+`npm run setup` installs SDK **0.2.2** from the GitHub `v0.2.2` tag, with the exact commit recorded
 in `package-lock.json`. The SDK installer uses the existing customer installation token to request
-file-specific download tokens for native engine **0.3.0** and its checksum from
+file-specific download tokens for native engine **0.3.1** and its checksum from
 `TELLUS_AUDIO_DOWNLOAD_BASE_URL` (staging by default), then
 downloads the engine files from `https://download.tellus.ai.kr` and verifies SHA-256. Login and download
 tokens are kept out of package URLs, the lockfile, and logs. A CDN `401` gets one fresh grant and one retry.
 
 The token API must be deployed on the selected Realtime Speech server. Its environment prefix must
 contain the native engine archive for your platform and its `.sha256` file.
-For staging this is `stg/audio/engine/v0.3.0/`. A missing API returns
+For staging this is `stg/audio/engine/v0.3.1/`. A missing API returns
 `404`; a missing artifact or invalid installation token must be resolved before setup can finish.
 
 `TELLUS_AUDIO_ENGINE_TOKEN` is the existing Tellus-issued customer installation token. Installation
