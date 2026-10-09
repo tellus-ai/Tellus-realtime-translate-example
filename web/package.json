@@ -16,7 +16,7 @@
     "test:engine-browser": "TMPDIR=/private/tmp node scripts/browser-engine-e2e.mjs"
   },
   "dependencies": {
-    "@tellus-ai/audio-sdk": "file:../../tellus-audio-sdk",
+    "@tellus-ai/audio-sdk-web": "file:../../tellus-audio-sdk/platforms/web",
     "@vitejs/plugin-react": "latest",
     "react": "latest",
     "react-dom": "latest",

@@ -8,7 +8,7 @@ import {
   type StartConversationInput,
 } from '../api/conversationApi';
 import type { MicrophoneRecorder } from '../audio/NativeMicrophone';
-import type { AudioChunk } from '@tellus-ai/audio-sdk/react-native';
+import type { AudioChunk } from '@tellus-ai/audio-sdk-mobile';
 import type { VadSnapshot } from '../audio/VADTypes';
 
 const DISABLED_VAD_SNAPSHOT: VadSnapshot = { enabled: false, ready: false, mode: 'disabled', gate: 'closed' };

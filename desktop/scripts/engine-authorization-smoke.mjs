@@ -1,7 +1,7 @@
 // Uses a separate conversation and never enables microphone/speaker capture.
 import assert from 'node:assert/strict';
-import { AudioCapture } from '@tellus-ai/audio-sdk';
-import { attachEngineAuthorization } from '@tellus-ai/audio-sdk/authorization';
+import { AudioCapture } from '@tellus-ai/audio-sdk-desktop';
+import { attachEngineAuthorization } from '@tellus-ai/audio-sdk-desktop/authorization';
 
 const httpBase = process.env.REALTIME_SPEECH_HTTP_URL || 'https://stgrtsapi.tellus.ai.kr';
 const wsBase = process.env.REALTIME_SPEECH_WS_URL || 'wss://stgrtsapi.tellus.ai.kr';

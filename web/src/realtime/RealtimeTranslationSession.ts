@@ -8,7 +8,7 @@ import {
   type StartConversationInput,
 } from '../api/conversationApi';
 import type { MicrophoneRecorder } from '../audio/BrowserMicrophone';
-import type { AudioChunk } from '@tellus-ai/audio-sdk/browser';
+import type { AudioChunk } from '@tellus-ai/audio-sdk-web';
 import type { RealtimeAudioFormat } from '../audio/RealtimeAudioFormat';
 import type { ClientVadSnapshot, VadEvent } from '../audio/vad/VADTypes';
 import {

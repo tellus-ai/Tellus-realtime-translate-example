@@ -1,4 +1,4 @@
-import type { BrowserEngineAssets } from '@tellus-ai/audio-sdk/browser';
+import type { BrowserEngineAssets } from '@tellus-ai/audio-sdk-web';
 
 /** 공개 런타임·암호화 모델 URL만 지정한다. 모델 키는 /audio 승인으로 받는다. */
 export function browserEngineAssets(clientVad: boolean): BrowserEngineAssets {

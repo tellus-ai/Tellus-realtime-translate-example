@@ -37,8 +37,8 @@ function runtimeProbe(url, shortWav, longWav) {
     if (!found) throw new Error('SDK module unavailable');
     return globalThis.__r(found[0]);
   }
-  var AudioEngine = requireModule(/tellus-audio-sdk.*react-native\/index\.js$/).AudioEngine;
-  var attach = requireModule(/tellus-audio-sdk.*authorization\/realtime\.js$/).attachEngineAuthorization;
+  var AudioEngine = requireModule(/runtime\/platforms\/mobile\/react-native\/index\.js$/).AudioEngine;
+  var attach = requireModule(/runtime\/bindings\/typescript\/authorization\/realtime\.js$/).attachEngineAuthorization;
   var delay = function (ms) { return new Promise(function (done) { setTimeout(done, ms); }); };
   function check(value, message) { if (!value) throw new Error(message); state.results.push(message); }
   function encoded(base64) {

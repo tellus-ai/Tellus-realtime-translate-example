@@ -15,6 +15,23 @@ Each app has its own packages and realtime communication implementation, with no
 Each app reads `API_KEY` from its local `.env` file and uses it in the
 `Authorization: Bearer <token>` header.
 
+## 플랫폼별 SDK 설치
+
+각 예제는 필요한 플랫폼 SDK만 설치합니다. 개발 의존성은 sibling SDK 저장소의 `platforms/web`, `platforms/mobile`, `platforms/desktop`에 연결합니다.
+
+| 예제 | 설치 패키지 |
+| --- | --- |
+| 웹 | `@tellus-ai/audio-sdk-web` |
+| 모바일 | `@tellus-ai/audio-sdk-mobile` |
+| 데스크톱 | `@tellus-ai/audio-sdk-desktop` |
+
+엔진 또는 SDK 구현을 변경했으면 예제를 실행하기 전에 산출물을 갱신합니다. 플랫폼 바이너리와 암호화 모델은 해당 SDK 패키지의 installer로 준비합니다.
+
+```sh
+npm --prefix ../Tellus-audio-engine run build:runtime
+npm --prefix ../tellus-audio-sdk run build
+```
+
 ## API contract
 
 The examples follow the Realtime Speech API documented in Swagger. This section

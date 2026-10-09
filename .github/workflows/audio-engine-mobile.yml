@@ -108,11 +108,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: native-engine-test-only
-          path: tellus-audio-sdk/vendor
+          path: tellus-audio-sdk/platforms/mobile/vendor
       - name: Verify SDK and install example dependencies
         run: |
-          cd tellus-audio-sdk
+          cd Tellus-audio-engine
+          npm ci --ignore-scripts
+          npm run build:runtime
+          cd ../tellus-audio-sdk
           npm ci --ignore-scripts --legacy-peer-deps
+          npm run build
           npm test
           npm run check:js
           npm run check:package
@@ -147,7 +151,18 @@ jobs:
         working-directory: Tellus-realtime-translate-example/mobile/android
         run: |
           sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
-          ./gradlew :app:assembleDebug :tellus-ai_audio-sdk:testDebugUnitTest \
+          cat > "$RUNNER_TEMP/tellus-native-unit.gradle" <<'GRADLE'
+          gradle.projectsEvaluated {
+              def sdk = gradle.rootProject.findProject(':tellus-ai_audio-sdk-mobile')
+              if (sdk != null) {
+                  sdk.android.sourceSets.test.java.srcDir(
+                      "${System.getenv('GITHUB_WORKSPACE')}/Tellus-audio-engine/src/platforms/mobile/android/src/test/java"
+                  )
+              }
+          }
+          GRADLE
+          ./gradlew :app:assembleDebug :tellus-ai_audio-sdk-mobile:testDebugUnitTest \
+            --init-script "$RUNNER_TEMP/tellus-native-unit.gradle" \
             --no-daemon --max-workers=2 -PreactNativeArchitectures=arm64-v8a,x86_64 \
             -PreactNativeDevServerPort=8088 > "$RUNNER_TEMP/android-build.log" 2>&1
       - name: Start localhost Metro and write test-only key file
@@ -175,7 +190,7 @@ jobs:
           xcrun simctl spawn "$DEVICE_ID" defaults write com.tellus.realtimetranslationexample RCT_jsLocation -string localhost:8088
           xcrun simctl launch "$DEVICE_ID" com.tellus.realtimetranslationexample
           node scripts/native-sdk-probe.mjs "$GITHUB_WORKSPACE/Tellus-audio-engine" \
-            "$GITHUB_WORKSPACE/tellus-audio-sdk/vendor/ios/models" "$RUNNER_TEMP/model-key.txt" > "$RUNNER_TEMP/native-probe.json"
+            "$GITHUB_WORKSPACE/tellus-audio-sdk/platforms/mobile/vendor/ios/models" "$RUNNER_TEMP/model-key.txt" > "$RUNNER_TEMP/native-probe.json"
       - name: Real Android SDK metadata and synthetic playback probe
         if: matrix.platform == 'android'
         working-directory: Tellus-realtime-translate-example/mobile
@@ -197,7 +212,7 @@ jobs:
           adb reverse tcp:8088 tcp:8088
           adb shell am start -n com.tellus.realtimetranslationexample/.MainActivity
           node scripts/native-sdk-probe.mjs "$GITHUB_WORKSPACE/Tellus-audio-engine" \
-            "$GITHUB_WORKSPACE/tellus-audio-sdk/vendor/android/models" "$RUNNER_TEMP/model-key.txt" > "$RUNNER_TEMP/native-probe.json"
+            "$GITHUB_WORKSPACE/tellus-audio-sdk/platforms/mobile/vendor/android/models" "$RUNNER_TEMP/model-key.txt" > "$RUNNER_TEMP/native-probe.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -208,4 +223,4 @@ jobs:
             ${{ runner.temp }}/metro.log
             ${{ runner.temp }}/emulator.log
             ${{ runner.temp }}/native-probe.json
-            tellus-audio-sdk/android/build/test-results/testDebugUnitTest/
+            tellus-audio-sdk/platforms/mobile/android/build/test-results/testDebugUnitTest/

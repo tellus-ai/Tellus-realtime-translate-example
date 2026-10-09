@@ -1,5 +1,5 @@
-import { AudioEngine, type AudioCapture, type AudioChunk } from '@tellus-ai/audio-sdk/react-native';
-import { attachEngineAuthorization, type EngineAuthorizationController } from '@tellus-ai/audio-sdk/authorization';
+import { AudioEngine, type AudioCapture, type AudioChunk } from '@tellus-ai/audio-sdk-mobile';
+import { attachEngineAuthorization, type EngineAuthorizationController } from '@tellus-ai/audio-sdk-mobile/authorization';
 
 export interface MicrophoneRecorder {
   prepare(clientVad: boolean): Promise<void>;

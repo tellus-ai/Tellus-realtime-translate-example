@@ -2388,7 +2388,7 @@ DEPENDENCIES:
   - RNReanimated (from `../node_modules/react-native-reanimated`)
   - RNScreens (from `../node_modules/react-native-screens`)
   - RNWorklets (from `../node_modules/react-native-worklets`)
-  - TellusAudioSdk (from `../../../tellus-audio-sdk`)
+  - TellusAudioSdk (from `../../../tellus-audio-sdk/platforms/mobile`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
 
 SPEC REPOS:
@@ -2593,7 +2593,7 @@ EXTERNAL SOURCES:
   RNWorklets:
     :path: "../node_modules/react-native-worklets"
   TellusAudioSdk:
-    :path: "../../../tellus-audio-sdk"
+    :path: "../../../tellus-audio-sdk/platforms/mobile"
   Yoga:
     :path: "../node_modules/react-native/ReactCommon/yoga"
 

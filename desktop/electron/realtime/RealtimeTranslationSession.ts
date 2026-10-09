@@ -3,7 +3,7 @@ import {
   type AuthorizableAudioCapture,
   type EngineAuthorizationController,
   type EngineAuthorizationSocket,
-} from '@tellus-ai/audio-sdk/authorization';
+} from '@tellus-ai/audio-sdk-desktop/authorization';
 import type { RealtimeApi } from '../realtimeApi';
 import type { StartConversationInput } from '../shared/desktopApi';
 import type {
@@ -89,7 +89,7 @@ export interface CaptureVadStatus {
   vadIsSpeech: boolean;
 }
 
-/** The parts of the audio engine capture the session drives (`AudioCapture` in @tellus-ai/audio-sdk). */
+/** The parts of the audio engine capture the session drives (`AudioCapture` in @tellus-ai/audio-sdk-desktop). */
 export interface MicrophoneCapture extends AuthorizableAudioCapture {
   onError(callback: (error: Error | null, detail: { message: string; recoverable: boolean }) => unknown): void;
   start(callback: (error: Error | null, chunk: CapturedAudioChunk) => unknown): void;

@@ -2,7 +2,7 @@
 
 A standalone Electron app that connects directly to the Tellus staging Realtime Speech server. Microphone
 capture, Silero VAD, and Opus encoding run in the native Tellus audio engine
-([`@tellus-ai/audio-sdk`](https://github.com/tellus-ai/tellus-audio-sdk)) inside the Electron main process.
+([`@tellus-ai/audio-sdk-desktop`](https://github.com/tellus-ai/tellus-audio-sdk)) inside the Electron main process.
 The React screen started as a copy of the [web example](../web/README.md); nothing is imported from `web/`.
 
 See the root [`README.md`](../README.md#api-contract) for the Swagger snapshot of the
@@ -226,7 +226,7 @@ process environment take precedence. Vite does not load `.env` for the renderer 
 | --- | --- |
 | `electron/main.ts` | App lifecycle, window, and wiring |
 | `electron/preload.ts` | `window.tellusDesktop` bridge |
-| `electron/audio/audioEngine.ts` | The only module that imports `@tellus-ai/audio-sdk` |
+| `electron/audio/audioEngine.ts` | The only module that imports `@tellus-ai/audio-sdk-desktop` |
 | `electron/realtime/RealtimeTranslationSession.ts` | Session lifecycle, WebSockets, engine authorization, `audio.status`, reconnects |
 | `electron/realtime/closePolicy.ts` | What each WebSocket close means, and the backoff steps |
 | `electron/realtime/nodeWebSocket.ts` | Opens the WebSockets with the `ws` package |
@@ -246,7 +246,7 @@ npm test
 npm run build
 ```
 
-현재 개발 후보는 sibling `../../tellus-audio-sdk`를 사용한다. SDK의 `vendor/darwin-universal`에
+현재 개발 후보는 sibling `../../tellus-audio-sdk/platforms/desktop`를 사용한다. SDK의 `vendor/darwin-universal`에
 같은 엔진 후보의 universal NAPI와 ORT/models를 준비한 뒤 `npm ci --ignore-scripts`로 설치한다.
 공개 테스트 서명 키를 신뢰하도록 빌드한 테스트 바이너리에서 다음 명령은 원격 API를 호출하지 않는다.
 

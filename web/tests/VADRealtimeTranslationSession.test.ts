@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AudioChunk } from '@tellus-ai/audio-sdk/browser';
+import type { AudioChunk } from '@tellus-ai/audio-sdk-web';
 import type { MicrophoneRecorder } from '../src/audio/BrowserMicrophone';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 

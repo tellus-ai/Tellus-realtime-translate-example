@@ -1,4 +1,4 @@
-import type { AudioCaptureConfig, AudioEngine } from '@tellus-ai/audio-sdk';
+import type { AudioCaptureConfig, AudioEngine } from '@tellus-ai/audio-sdk-desktop';
 import type { MicrophoneCapture } from '../realtime/RealtimeTranslationSession';
 
 const AUDIO_CAPTURE_CONFIG: AudioCaptureConfig = {
@@ -20,7 +20,7 @@ let enginePromise: Promise<AudioEngine> | null = null;
  */
 export function initializeAudioEngine(): Promise<AudioEngine> {
   if (!enginePromise) {
-    const promise = import('@tellus-ai/audio-sdk').then(({ AudioEngine }) => AudioEngine.init(AUDIO_CAPTURE_CONFIG));
+    const promise = import('@tellus-ai/audio-sdk-desktop').then(({ AudioEngine }) => AudioEngine.init(AUDIO_CAPTURE_CONFIG));
     enginePromise = promise;
     promise.catch(() => {
       if (enginePromise === promise) enginePromise = null;

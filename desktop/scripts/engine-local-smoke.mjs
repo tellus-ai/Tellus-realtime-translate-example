@@ -9,18 +9,18 @@ const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--mic'), 'Expected only --mic');
 const microphone = args[0] === '--mic';
-const sdk = path.resolve(desktop, '../../tellus-audio-sdk');
+const sdk = path.resolve(desktop, '../../tellus-audio-sdk/platforms/desktop');
 const engineRoot = path.resolve(process.env.TELLUS_ENGINE_ROOT ?? path.resolve(desktop, '../../Tellus-audio-engine'));
 const requireDesktop = createRequire(path.join(desktop, 'package.json'));
 const sha = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 assert.equal(process.env.TELLUS_ENGINE_TEST_LICENSE, '1');
-assert.equal(fs.realpathSync(requireDesktop.resolve('@tellus-ai/audio-sdk')), fs.realpathSync(path.join(sdk, 'dist/index.js')));
+assert.equal(fs.realpathSync(requireDesktop.resolve('@tellus-ai/audio-sdk-desktop')), fs.realpathSync(path.join(sdk, 'runtime/platforms/desktop/electron/index.js')));
 const nativeName = 'audio-capture.darwin-universal.node';
 const nativeSha = sha(path.join(engineRoot, nativeName));
 assert.equal(sha(path.join(sdk, 'vendor/darwin-universal', nativeName)), nativeSha);
 const requireEngine = createRequire(path.join(engineRoot, 'package.json'));
 const { signTestPermit } = requireEngine('./scripts/ci/engine-authorization-fixture');
-const { AudioCapture } = requireDesktop('@tellus-ai/audio-sdk');
+const { AudioCapture } = requireDesktop('@tellus-ai/audio-sdk-desktop');
 (async () => {
   let capture;
   if (microphone) {
@@ -84,7 +84,7 @@ const { AudioCapture } = requireDesktop('@tellus-ai/audio-sdk');
     assert.ok(chunks.every(chunk => chunk.bytes > 0 && chunk.codec === 'opus' && chunk.rate === 16000 && Number.isFinite(chunk.rms)));
     const maxRms = Math.max(0, ...chunks.map(chunk => chunk.rms));
     assert.ok(maxRms > 0, 'Actual microphone signal must be nonzero');
-    console.log(JSON.stringify({ sdk: fs.realpathSync(requireDesktop.resolve('@tellus-ai/audio-sdk')), nativeSha,
+    console.log(JSON.stringify({ sdk: fs.realpathSync(requireDesktop.resolve('@tellus-ai/audio-sdk-desktop')), nativeSha,
       microphone, sileroPreloaded: microphone, chunks: chunks.length, bytes: chunks.reduce((total, chunk) => total + chunk.bytes, 0),
       maxRms, pauseResumeStop: true, revokedStartResumeBlocked: true, networkCalls: 0 }));
   } finally { capture.stop(); capture.invalidateAuthorization(); }

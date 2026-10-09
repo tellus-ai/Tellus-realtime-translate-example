@@ -1,6 +1,6 @@
 # Web Realtime Translation Example
 
-Vite/React 예제입니다. `@tellus-ai/audio-sdk/browser`의 Rust WASM 엔진으로 마이크 오디오를 처리하고 Tellus Realtime Speech 서버로 전송합니다.
+Vite/React 예제입니다. `@tellus-ai/audio-sdk-web`의 Rust WASM 엔진으로 마이크 오디오를 처리하고 Tellus Realtime Speech 서버로 전송합니다.
 
 See the root [`README.md`](../README.md#api-contract) for the
 Swagger snapshot of the REST and WebSocket contracts used by this example.

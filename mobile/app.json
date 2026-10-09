@@ -8,7 +8,7 @@
     "userInterfaceStyle": "automatic",
     "plugins": [
       "expo-router",
-      "@tellus-ai/audio-sdk"
+      "@tellus-ai/audio-sdk-mobile"
     ],
     "ios": {
       "supportsTablet": true,

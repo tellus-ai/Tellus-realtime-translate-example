@@ -21,7 +21,7 @@ try {
   process.exitCode = result.status ?? 1;
   // Verify the engine even when the user's npm configuration disables lifecycle scripts.
   if (process.exitCode === 0) {
-    const engine = spawnSync(process.execPath, [fileURLToPath(new URL('node_modules/@tellus-ai/audio-sdk/dist/installer/install-binary-cli.js', root))], {
+    const engine = spawnSync(process.execPath, [fileURLToPath(new URL('node_modules/@tellus-ai/audio-sdk-desktop/dist/installer/install-binary-cli.js', root))], {
       cwd: fileURLToPath(root), stdio: 'inherit',
       env: { ...env, TELLUS_AUDIO_ENGINE_TOKEN: installationToken, TELLUS_AUDIO_DOWNLOAD_BASE_URL: baseUrl },
     });

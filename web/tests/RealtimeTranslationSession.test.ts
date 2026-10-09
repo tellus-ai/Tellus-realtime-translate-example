@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MicrophoneRecorder } from '../src/audio/BrowserMicrophone';
-import type { AudioChunk } from '@tellus-ai/audio-sdk/browser';
+import type { AudioChunk } from '@tellus-ai/audio-sdk-web';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 
 const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test' };

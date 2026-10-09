@@ -1,7 +1,7 @@
 <!doctype html><meta charset="utf-8"><button id="run">Run real SDK</button><pre id="result"></pre>
 <script type="module">
-import { AudioEngine } from '/tellus-audio/browser/index.js';
-import { attachEngineAuthorization } from '/tellus-audio/authorization/realtime.js';
+import { AudioEngine } from '/tellus-audio/platforms/web/index.js';
+import { attachEngineAuthorization } from '/tellus-audio/bindings/typescript/authorization/realtime.js';
 const sampleRate = Number(new URLSearchParams(location.search).get('sampleRate') ?? 16000);
 const modelFamily = sampleRate === 48000 ? 'fe-s48' : 'fe-s16';
 const frameSamples = sampleRate / 50;

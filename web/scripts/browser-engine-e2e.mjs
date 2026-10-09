@@ -122,7 +122,7 @@ try {
   if (streamModels) {
     await page.goto(server.url + `/__sdk_probe?sampleRate=${sampleRate}`);
     const beforeGesture = await page.evaluate(async () => {
-      const { AudioEngine } = await import('/tellus-audio/browser/index.js');
+      const { AudioEngine } = await import('/tellus-audio/platforms/web/index.js');
       const engine = await AudioEngine.init({}, { engineModuleUrl: '/tellus-audio/tellus-audio-engine.mjs', wasmUrl: '/tellus-audio/tellus-audio-engine.wasm', ortWasmBaseUrl: '/tellus-audio/ort/', encryptedModels: [] });
       try {
         const capture = engine.createCapture();

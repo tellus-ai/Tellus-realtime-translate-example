@@ -13,7 +13,7 @@
   "dependencies": {
     "@expo/env": "2.4.3",
     "@expo/metro-runtime": "^55.0.12",
-    "@tellus-ai/audio-sdk": "file:../../tellus-audio-sdk",
+    "@tellus-ai/audio-sdk-mobile": "file:../../tellus-audio-sdk/platforms/mobile",
     "expo": "~55.0.28",
     "expo-constants": "~55.0.17",
     "expo-linking": "~55.0.17",

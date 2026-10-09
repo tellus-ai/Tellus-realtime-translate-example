@@ -23,7 +23,7 @@
     "test:engine-local": "node scripts/engine-local-smoke.mjs"
   },
   "dependencies": {
-    "@tellus-ai/audio-sdk": "file:../../tellus-audio-sdk",
+    "@tellus-ai/audio-sdk-desktop": "file:../../tellus-audio-sdk/platforms/desktop",
     "ws": "^8.21.3"
   },
   "devDependencies": {
@@ -50,7 +50,7 @@
       "dist/**/*"
     ],
     "asarUnpack": [
-      "node_modules/@tellus-ai/audio-sdk/vendor/**/*"
+      "node_modules/@tellus-ai/audio-sdk-desktop/vendor/**/*"
     ],
     "mac": {
       "category": "public.app-category.productivity",

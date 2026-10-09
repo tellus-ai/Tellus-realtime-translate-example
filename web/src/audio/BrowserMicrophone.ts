@@ -1,5 +1,5 @@
-import { AudioEngine, type AudioCapture, type AudioChunk } from '@tellus-ai/audio-sdk/browser';
-import { attachEngineAuthorization, type EngineAuthorizationController } from '@tellus-ai/audio-sdk/authorization';
+import { AudioEngine, type AudioCapture, type AudioChunk } from '@tellus-ai/audio-sdk-web';
+import { attachEngineAuthorization, type EngineAuthorizationController } from '@tellus-ai/audio-sdk-web/authorization';
 import { browserEngineAssets } from '../config/browserEngineAssets';
 
 export interface MicrophoneRecorder {

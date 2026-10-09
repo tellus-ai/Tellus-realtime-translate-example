@@ -1,5 +1,5 @@
 import type { MicrophoneRecorder } from '../src/audio/NativeMicrophone';
-import type { AudioChunk } from '@tellus-ai/audio-sdk/react-native';
+import type { AudioChunk } from '@tellus-ai/audio-sdk-mobile';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 
 const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test', appOrigin: 'https://app.example.test' };
