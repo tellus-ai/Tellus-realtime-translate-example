@@ -1,0 +1,211 @@
+name: React Native SDK and real mobile pipeline
+
+on:
+  pull_request:
+    paths: ['mobile/**', '.github/workflows/audio-engine-mobile.yml']
+  workflow_dispatch:
+    inputs:
+      engine_ref:
+        description: Engine revision containing the mobile C ABI builder
+        type: string
+        default: main
+      sdk_ref:
+        description: SDK revision containing the native adapter and Expo plugin
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-artifacts:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      # 공개 CI 키를 신뢰하는 테스트 산출물이다. release에 사용하지 않는다.
+      TELLUS_ENGINE_LICENSE_PUBLIC_KEYS: ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c
+      TELLUS_ENGINE_TEST_LICENSE: '1'
+      TELLUS_MODEL_CONTENT_KEY: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: tellus-ai/Tellus-audio-engine
+          ref: ${{ inputs.engine_ref || 'main' }}
+          path: Tellus-audio-engine
+          lfs: true
+          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN || github.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.92.0'
+          components: llvm-tools,rust-docs
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,aarch64-linux-android,x86_64-linux-android
+      - name: Install native build tools
+        run: |
+          brew install meson ninja cmake
+          sdkmanager --install 'ndk;27.1.12297006'
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.1.12297006" >> "$GITHUB_ENV"
+      - name: Build and verify both test-only mobile artifacts
+        working-directory: Tellus-audio-engine
+        run: |
+          npm ci --ignore-scripts
+          npm run build:mobile -- --platform ios --key-id ci-public-fixture
+          node scripts/ci/verify-mobile-artifacts.js ios
+          npm run build:mobile -- --platform android --key-id ci-public-fixture
+          node scripts/ci/verify-mobile-artifacts.js android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-engine-test-only
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            Tellus-audio-engine/.build/mobile/ios/
+            Tellus-audio-engine/.build/mobile/android/
+
+  example:
+    needs: native-artifacts
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ios
+            runner: macos-15
+          - platform: android
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      TELLUS_ENGINE_TEST_LICENSE: '1'
+      NODE_OPTIONS: --dns-result-order=ipv4first
+      METRO_URL: http://localhost:8088
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: Tellus-realtime-translate-example
+      - uses: actions/checkout@v4
+        with:
+          repository: tellus-ai/tellus-audio-sdk
+          ref: ${{ inputs.sdk_ref || 'main' }}
+          path: tellus-audio-sdk
+          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN || github.token }}
+      - uses: actions/checkout@v4
+        with:
+          repository: tellus-ai/Tellus-audio-engine
+          ref: ${{ inputs.engine_ref || 'main' }}
+          path: Tellus-audio-engine
+          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN || github.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-engine-test-only
+          path: tellus-audio-sdk/vendor
+      - name: Verify SDK and install example dependencies
+        run: |
+          cd tellus-audio-sdk
+          npm ci --ignore-scripts --legacy-peer-deps
+          npm test
+          npm run check:js
+          npm run check:package
+          npm audit --omit=dev --audit-level=high
+          cd ../Tellus-realtime-translate-example/mobile
+          npm ci --ignore-scripts --legacy-peer-deps
+          npm run type-check
+          npm test -- --no-watch
+          cd ../web
+          npm ci --ignore-scripts
+      - name: Generate fresh Expo host with the SDK plugin
+        working-directory: Tellus-realtime-translate-example/mobile
+        env:
+          CI: '1'
+        run: npx expo prebuild --clean --platform ${{ matrix.platform }} --no-install
+      - name: Build iOS simulator app
+        if: matrix.platform == 'ios'
+        working-directory: Tellus-realtime-translate-example/mobile
+        run: |
+          cd ios && pod install && cd ..
+          xcodebuild -workspace ios/TellusRealtimeTranslationExample.xcworkspace \
+            -scheme TellusRealtimeTranslationExample -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/ios-derived" \
+            -jobs 2 ONLY_ACTIVE_ARCH=YES ARCHS=arm64 CODE_SIGNING_ALLOWED=NO > "$RUNNER_TEMP/ios-build.log" 2>&1
+      - uses: actions/setup-java@v4
+        if: matrix.platform == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build Android app and SDK lifecycle tests
+        if: matrix.platform == 'android'
+        working-directory: Tellus-realtime-translate-example/mobile/android
+        run: |
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
+          ./gradlew :app:assembleDebug :tellus-ai_audio-sdk:testDebugUnitTest \
+            --no-daemon --max-workers=2 -PreactNativeArchitectures=arm64-v8a,x86_64 \
+            -PreactNativeDevServerPort=8088 > "$RUNNER_TEMP/android-build.log" 2>&1
+      - name: Start localhost Metro and write test-only key file
+        working-directory: Tellus-realtime-translate-example/mobile
+        env:
+          CI: '1'
+        run: |
+          printf '%s' '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' > "$RUNNER_TEMP/model-key.txt"
+          chmod 600 "$RUNNER_TEMP/model-key.txt"
+          npx expo start --dev-client --localhost --port 8088 > "$RUNNER_TEMP/metro.log" 2>&1 &
+          for ((attempt=0; attempt<60; attempt++)); do
+            if curl --fail --silent http://localhost:8088/status; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Real iOS SDK metadata and synthetic playback probe
+        if: matrix.platform == 'ios'
+        working-directory: Tellus-realtime-translate-example/mobile
+        run: |
+          DEVICE_ID=$(xcrun simctl list devices available -j | node -e 'let text="";process.stdin.on("data",chunk=>text+=chunk);process.stdin.on("end",()=>{const device=Object.values(JSON.parse(text).devices).flat().find(device=>device.isAvailable&&device.name.startsWith("iPhone"));if(!device)process.exit(1);process.stdout.write(device.udid);});')
+          xcrun simctl boot "$DEVICE_ID"
+          xcrun simctl bootstatus "$DEVICE_ID" -b
+          xcrun simctl install "$DEVICE_ID" "$RUNNER_TEMP/ios-derived/Build/Products/Debug-iphonesimulator/TellusRealtimeTranslationExample.app"
+          xcrun simctl privacy "$DEVICE_ID" grant microphone com.tellus.realtimetranslationexample
+          xcrun simctl spawn "$DEVICE_ID" defaults write com.tellus.realtimetranslationexample RCT_jsLocation -string localhost:8088
+          xcrun simctl launch "$DEVICE_ID" com.tellus.realtimetranslationexample
+          node scripts/native-sdk-probe.mjs "$GITHUB_WORKSPACE/Tellus-audio-engine" \
+            "$GITHUB_WORKSPACE/tellus-audio-sdk/vendor/ios/models" "$RUNNER_TEMP/model-key.txt" > "$RUNNER_TEMP/native-probe.json"
+      - name: Real Android SDK metadata and synthetic playback probe
+        if: matrix.platform == 'android'
+        working-directory: Tellus-realtime-translate-example/mobile
+        env:
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          sudo chmod 666 /dev/kvm
+          sdkmanager --install 'system-images;android-36;google_apis;x86_64'
+          echo no | avdmanager create avd --name Tellus_CI --package 'system-images;android-36;google_apis;x86_64' --device pixel
+          "$ANDROID_HOME/emulator/emulator" -avd Tellus_CI -no-window -no-snapshot-save -no-boot-anim -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          adb wait-for-device
+          for ((attempt=0; attempt<180; attempt++)); do
+            if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; then break; fi
+            sleep 1
+          done
+          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
+          adb install android/app/build/outputs/apk/debug/app-debug.apk
+          adb shell pm grant com.tellus.realtimetranslationexample android.permission.RECORD_AUDIO
+          adb reverse tcp:8088 tcp:8088
+          adb shell am start -n com.tellus.realtimetranslationexample/.MainActivity
+          node scripts/native-sdk-probe.mjs "$GITHUB_WORKSPACE/Tellus-audio-engine" \
+            "$GITHUB_WORKSPACE/tellus-audio-sdk/vendor/android/models" "$RUNNER_TEMP/model-key.txt" > "$RUNNER_TEMP/native-probe.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-${{ matrix.platform }}-test-evidence
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/*-build.log
+            ${{ runner.temp }}/metro.log
+            ${{ runner.temp }}/emulator.log
+            ${{ runner.temp }}/native-probe.json
+            tellus-audio-sdk/android/build/test-results/testDebugUnitTest/

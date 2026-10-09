@@ -1,6 +1,6 @@
 # Web Realtime Translation Example
 
-A standalone Vite/React example that connects directly to the Tellus staging Realtime Speech server.
+Vite/React 예제입니다. `@tellus-ai/audio-sdk/browser`의 Rust WASM 엔진으로 마이크 오디오를 처리하고 Tellus Realtime Speech 서버로 전송합니다.
 
 See the root [`README.md`](../README.md#api-contract) for the
 Swagger snapshot of the REST and WebSocket contracts used by this example.
@@ -10,6 +10,7 @@ Swagger snapshot of the REST and WebSocket contracts used by this example.
 ```bash
 cp .env.example .env
 npm install
+npm run prepare:engine
 npm run dev
 ```
 
@@ -19,54 +20,35 @@ You can also use the development script.
 ./dev.sh
 ```
 
+SDK의 `vendor/web`에 엔진 `.mjs`·`.wasm`과 암호화 모델이 준비되어 있어야 합니다. `prepare:engine`은 SDK의 자산 복사 도구로 `public/tellus-audio/`를 생성하며 `dev`와 `build` 전에 자동 실행됩니다. 엔진 또는 SDK를 변경했으면 먼저 SDK를 다시 빌드합니다. 배포 서버의 모델 키 등록은 복사한 모델 manifest의 `keyId`와 일치해야 합니다.
+
 Set an OAuth access token in `API_KEY` in `.env`, select two different languages, and start the session.
 The token cannot be entered or changed in the browser UI. Restart the development server after changing
 environment variables.
 
 You can select the voice activity detection method before starting. The default is **Use Silero client VAD**,
 and it cannot be changed while a session is active. Turning the toggle off selects **Use server VAD**. In this
-mode, the browser does not load the Silero model or ONNX Runtime and saves `client_vad: false`.
+mode, the browser does not load the Silero model and saves `client_vad: false`.
 
-## Environment
+## 엔진과 환경
 
-- HTTP: `https://stgrtsapi.tellus.ai.kr`
-- WebSocket: `wss://stgrtsapi.tellus.ai.kr`
-- Audio: Opus (WebCodecs 지원 시), PCM16 런타임 폴백, 16 kHz, mono, 20 ms
+- HTTP 기본값: `https://stgrtsapi.tellus.ai.kr`
+- WebSocket 기본값: `wss://stgrtsapi.tellus.ai.kr`
+- 전송: Rust Opus, 16 kHz, mono, 20 ms
+- `VITE_TELLUS_AUDIO_ASSET_BASE`: 엔진·ORT·암호화 모델 자산의 기준 URL. 기본값은 문서 URL 기준 `tellus-audio/`입니다.
+- `VITE_TELLUS_DENOISE=true`: FastEnhancer를 활성화합니다. 기본값은 `false`입니다.
 
-## Client VAD
+Start 버튼에서 AudioContext를 준비한 뒤 `/audio`의 엔진 permit을 검증하고 HPKE 모델 키를 적용합니다. 암호화 모델 복호화와 모델 로드는 Rust 엔진에서 수행하며 승인 완료 뒤 마이크를 시작합니다. OAuth 토큰이나 모델 콘텐츠 키를 SDK 자산에 포함하지 않습니다.
 
-This example does not depend on `@tellus-ai/audio-sdk`. It runs the official Silero VAD v6.2.1 ONNX model
-in an `onnxruntime-web@1.24.1` Web Worker.
+AudioWorklet은 브라우저가 제공한 입력 프레임을 Worker로 전달합니다. Rust가 LPF·resample·AEC·FastEnhancer·DSP·limiter·Silero·Opus를 처리합니다. 브라우저 마이크의 echo cancellation, noise suppression, auto gain control은 비활성화합니다. ORT Web `1.24.1`은 Worker에서 single-thread WASM으로 실행합니다. `SharedArrayBuffer`와 교차 출처 격리 헤더는 필요하지 않습니다.
 
-- positive/negative threshold: `0.5` / `0.35`
-- minimum silence: `550 ms` (`8,800` samples)
-- inference input: `512` samples + `64` context
-- recurrent state: `[2, 1, 128]`, sample rate tensor: int64 scalar `16000`
-- the session ends without dropping audio after `8` consecutive inference errors or a FIFO backlog of `10` frames (`200 ms`)
-- level: `0.5` medium, `0.65` strong, `0.85` veryStrong
+Silero 기본 positive/negative threshold는 `0.5` / `0.35`, silence는 `550 ms`, pre-speech는 `500 ms`입니다. SDK가 반환한 gate 전이만 UI와 `audio.status`에 반영하며 해당 오디오보다 먼저 전송합니다. gate가 닫혀도 오디오 전송을 유지합니다. SDK 출력의 `validSampleCount`는 마지막 패딩 프레임의 실제 샘플 수를 나타냅니다.
 
-Every 20 ms, the same Float32 samples are used to create the VAD input and PCM16 source audio. When
-`AudioEncoder` and `AudioData` are available, a dedicated Worker encodes that source as raw Opus at 64 kbps;
-otherwise the source is sent as PCM16. VAD and uplink are serialized through a single FIFO, and a gate-transition
-`audio.status` event is sent before the corresponding audio frame. Silent audio continues to be transmitted.
-When reconnecting, the sample cursor for the new Audio WebSocket resets to `0`, while `status_seq` continues
-to increase throughout the conversation.
+마이크는 HTTPS 또는 localhost에서 사용할 수 있습니다. 배포 origin은 Realtime Speech 서버에서 허용되어야 합니다. 탭이 숨겨지면 승인을 취소하고, 다시 보일 때 새 permit을 얻어 마이크를 재개합니다. SDK 초기화는 클릭 전에 가능하며 AudioContext는 캡처를 시작할 때 재개합니다.
 
-The model comes from
-[`v6.2.1/src/silero_vad/data/silero_vad.onnx`](https://github.com/snakers4/silero-vad/blob/v6.2.1/src/silero_vad/data/silero_vad.onnx)
-in the official Silero repository. Its SHA-256 hash is
-`1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3`.
-`npm run verify:vad-model` verifies the model before each build. Silero VAD is licensed under the MIT License.
+`API_KEY`는 빌드 시 클라이언트 번들에 포함됩니다. 브라우저에 배포하는 값에는 짧은 유효기간과 제한된 권한의 OAuth 토큰을 사용합니다.
 
-ONNX Runtime `.mjs` and `.wasm` files are served from `public/ort/` instead of a CDN.
-`npm install`, `npm run dev`, and `npm run build` automatically copy the required files from the exact-pinned package.
-
-The microphone is available only over HTTPS or localhost. The deployment domain and local Vite origin must
-be registered as allowed origins on the Realtime Speech server.
-
-`API_KEY` is not committed to the source repository, but it is included in the client bundle when the web
-application is built. Values deployed to a browser cannot be considered secret, so use a short-lived,
-restricted access token.
+관련 공식 문서: [AudioWorklet 입력 프레임](https://developer.mozilla.org/en-US/docs/Web/API/AudioWorkletProcessor/process), [ORT WASM 환경 설정](https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html), [Emscripten Asyncify](https://emscripten.org/docs/porting/asyncify.html).
 
 ## Error Handling and Reconnects
 
@@ -85,7 +67,7 @@ The session follows
 | Any other close code, including `1006`, `1011`, and `1013` | Reopens the socket after 1, 2, 5, 10, then every 30 seconds, or after `retry_after_ms` when that is longer. A socket that closes while a reconnect is already waiting is reopened by that reconnect. |
 | A socket closes, or is not usable within 10 seconds, while starting (until both sockets are open and the microphone has started, that is, before the status is `recording`) | The start fails. Nothing is reconnected. |
 | Only the Result WebSocket closed | Recording and `/audio` continue. Only Result is reopened. |
-| `/audio` closed | Pauses the microphone and shows `reconnecting`. On the new socket the sample cursor restarts at 0 and the VAD and encoder are reset. The example sends an `audio.status` when the socket opens, which the server may ignore because no audio has arrived yet; VAD gate events follow with the audio frames. A session that was paused stays paused. |
+| `/audio` closed | Pauses the microphone and shows `reconnecting`. On the new socket a fresh native permit is required before capture resumes, and the wire sample cursor restarts at 0. The example sends an `audio.status` when authorization completes, which the server may ignore because no audio has arrived yet; VAD gate events follow with the audio frames. A session that was paused stays paused. |
 | Both sockets closed | Opens Result first and `/audio` after `participants.snapshot`. |
 | A reconnect attempt is not usable within 10 seconds, or closes again | Moves to the next backoff step. The steps start over after both sockets stayed open for 30 seconds. |
 | Browser `online` event | A reconnect that is waiting runs at once. `offline` is ignored. |
@@ -121,10 +103,7 @@ Not implemented:
 Replace `src/components/` and `src/styles.css` to apply your own design. API, WebSocket, and audio processing
 are encapsulated behind `useRealtimeTranslation()`.
 
-VAD-specific source files, tests, and verification scripts all start with `VAD`. The toggle and status UI are
-in `src/components/VADControl.tsx`, while the policy and Worker implementation are in `src/audio/vad/VAD*.ts`.
-Keep the original filenames of the third-party `.mjs` and `.wasm` files that ONNX Runtime resolves by name,
-as well as the official model filename.
+SDK 연결점은 `src/audio/BrowserMicrophone.ts`, 자산 URL은 `src/config/browserEngineAssets.ts`입니다. VAD UI는 `src/components/VADControl.tsx`와 `src/audio/vad/VADTypes.ts`에 있습니다. 오디오 처리와 모델 추론 코드는 SDK와 공통 Rust 엔진에 있습니다.
 
 ## Verification
 
@@ -134,7 +113,23 @@ npm test
 npm run build
 ```
 
-## Live Development Server Smoke Test
+## 실제 브라우저 엔진 검증
+
+`test:engine-browser`는 공개 CI 테스트 서명 키로 빌드한 엔진과 그 테스트용 CEK로 패키징한 모델이 필요합니다. 릴리스 엔진이나 운영 키를 사용하지 않습니다.
+
+```bash
+TELLUS_ENGINE_TEST_LICENSE=1 \
+TELLUS_TEST_MODEL_KEY_FILE=/absolute/path/to/test-content-key.txt \
+npm run test:engine-browser
+```
+
+이미 설치된 Chromium을 사용할 때는 `TELLUS_CHROMIUM_PATH`를 실행 파일 경로로 지정합니다. 테스트는 브라우저를 다운로드하지 않습니다. 임시 빌드와 결과는 `TMPDIR` 아래에 생성합니다.
+
+이 테스트는 실제 production 웹 번들, AudioWorklet, ORT, Rust WASM, 암호화 FE/Silero, Opus를 실행합니다. localhost 서버는 테스트 permit·HPKE 키·REST·번역 결과만 제공합니다. 승인 전 입력 차단, 마이크 OS DSP 비활성화, pause/resume/reset, 재생과 취소, VAD 전이, 재연결·승인 거절 후 출력 차단을 검증합니다. 테스트 서버의 번역 문장은 외부 번역 서비스 검증 결과가 아닙니다.
+
+## 기존 서버 계약 Smoke Test
+
+이 스크립트는 SDK를 경유하지 않는 기존 서버 PCM16 계약 검사입니다. 실제 엔진 검증에는 `test:engine-browser`를 사용합니다.
 
 The test uses `API_KEY` from `.env` only as a Bearer token and never prints it. It creates a Conversation,
 verifies both WebSocket connections and PCM16 transmission, and then terminates the Conversation in `finally`.

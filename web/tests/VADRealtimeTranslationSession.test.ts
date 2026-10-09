@@ -1,291 +1,157 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AudioChunk } from '@tellus-ai/audio-sdk/browser';
 import type { MicrophoneRecorder } from '../src/audio/BrowserMicrophone';
-import type { PcmFrame } from '../src/audio/PcmFramePipeline';
-import type { RealtimeAudioEncoder } from '../src/audio/opus/OpusEncoderWorkerClient';
-import type { ClientVadProcessor, VadDecision, VadProcessInput } from '../src/audio/vad/VADTypes';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 
 class FakeMicrophone implements MicrophoneRecorder {
-  private onFrame: ((frame: PcmFrame) => void) | null = null;
+  preparedVad?: boolean;
+  authorization: Promise<void> = Promise.resolve();
+  started = false;
+  tail?: AudioChunk;
+  private onFrame?: (frame: AudioChunk) => void;
+  private onError?: (error: Error) => void;
 
-  async start(onFrame: (frame: PcmFrame) => void): Promise<void> {
+  async prepare(clientVad: boolean): Promise<void> { this.preparedVad = clientVad; }
+  async authorize(): Promise<void> { await this.authorization; }
+  releaseAuthorization(): void { this.started = false; }
+  async start(onFrame: (frame: AudioChunk) => void, onError: (error: Error) => void): Promise<void> {
+    this.started = true;
     this.onFrame = onFrame;
+    this.onError = onError;
   }
-
-  async pause(): Promise<void> {}
-  async resume(): Promise<void> {}
-  async stop(): Promise<void> { this.onFrame = null; }
-
-  emit(frame: PcmFrame): void {
-    this.onFrame?.(frame);
+  async pause(): Promise<void> { this.started = false; }
+  async resume(): Promise<void> { this.started = true; }
+  async stop(): Promise<void> {
+    if (this.tail) this.onFrame?.(this.tail);
+    this.tail = undefined;
+    this.started = false;
+    this.onFrame = undefined;
   }
+  emit(chunk: AudioChunk): void { this.onFrame?.(chunk); }
+  fail(error: Error): void { this.onError?.(error); }
 }
 
-class DeferredVad implements ClientVadProcessor {
-  readonly calls: VadProcessInput[] = [];
-  private resolvers: Array<(decision: VadDecision) => void> = [];
-
-  async initialize(): Promise<void> {}
-  async reset(): Promise<void> {}
-  async dispose(): Promise<void> {}
-
-  process(input: VadProcessInput): Promise<VadDecision> {
-    this.calls.push(input);
-    return new Promise((resolve) => this.resolvers.push(resolve));
-  }
-
-  resolveNext(decision: VadDecision): void {
-    const resolve = this.resolvers.shift();
-    if (!resolve) throw new Error('No pending VAD request');
-    resolve(decision);
-  }
-}
-
-class FakeAudioEncoder implements RealtimeAudioEncoder {
-  readonly inputs: ArrayBuffer[] = [];
-  initialized = false;
-  disposed = false;
-  resetCount = 0;
-
-  async initialize(): Promise<void> {
-    this.initialized = true;
-  }
-
-  async encode(pcm16: ArrayBuffer): Promise<ArrayBuffer> {
-    this.inputs.push(pcm16);
-    return new Uint8Array([this.inputs.length, 2, 3]).buffer;
-  }
-
-  async reset(): Promise<void> {
-    this.resetCount += 1;
-  }
-
-  async dispose(): Promise<void> {
-    this.disposed = true;
-  }
-}
-
-class FakeWebSocket {
-  static readonly CONNECTING = 0;
+class FakeSocket {
   static readonly OPEN = 1;
-  static readonly CLOSED = 3;
-  static instances: FakeWebSocket[] = [];
-
-  readonly url: string;
-  readonly messages: Array<string | ArrayBuffer> = [];
-  readyState = FakeWebSocket.CONNECTING;
+  static readonly CONNECTING = 0;
+  static instances: FakeSocket[] = [];
+  readonly messages: (string | ArrayBuffer)[] = [];
+  readyState = 0;
   binaryType = 'blob';
-  onopen: ((event: Event) => void) | null = null;
-  onerror: ((event: Event) => void) | null = null;
-  onclose: ((event: CloseEvent) => void) | null = null;
-  onmessage: ((event: MessageEvent) => void) | null = null;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
 
-  constructor(url: string) {
-    this.url = url;
-    FakeWebSocket.instances.push(this);
+  constructor(readonly url: string) {
+    FakeSocket.instances.push(this);
     queueMicrotask(() => {
-      this.readyState = FakeWebSocket.OPEN;
-      this.onopen?.(new Event('open'));
-      if (url.endsWith('/results')) this.receive({ type: 'participants.snapshot', data: {} });
+      this.readyState = 1;
+      this.onopen?.();
+      if (url.endsWith('/results')) this.onmessage?.({ data: JSON.stringify({ type: 'participants.snapshot', data: {} }) });
     });
   }
-
-  receive(message: object): void {
-    this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
-  }
-
-  send(data: string | ArrayBuffer): void {
-    this.messages.push(data);
-  }
-
-  close(): void {
-    this.readyState = FakeWebSocket.CLOSED;
-  }
+  send(data: string | ArrayBuffer): void { this.messages.push(data); }
+  close(): void { this.readyState = 3; }
 }
 
-const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test' };
-
-describe('RealtimeTranslationSession audio pipeline', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    FakeWebSocket.instances = [];
-    let requestIndex = 0;
-    fetchMock = vi.fn(async (url: string) => {
-      const body = requestIndex === 0 ? { conversation_id: 'conversation-1' } : {};
-      requestIndex += 1;
-      // Like the server, answer POST /end with conversation.ended on the Result WebSocket.
-      if (url.endsWith('/end')) FakeWebSocket.instances[0]?.receive({ type: 'conversation.ended' });
-      return new Response(JSON.stringify(body), { status: 200 });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    vi.stubGlobal('window', {
-      setTimeout,
-      clearTimeout,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      location: new URL('https://app.test/'),
-    });
-  });
-
-  afterEach(() => vi.unstubAllGlobals());
-
-  it('serializes VAD, transition status, and every PCM frame in FIFO order', async () => {
-    const microphone = new FakeMicrophone();
-    const vad = new DeferredVad();
-    const session = new RealtimeTranslationSession(endpoints, microphone, 'token', () => vad);
-    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
-
-    const frame = (): PcmFrame => ({ samples: new Float32Array(320), pcm16: new ArrayBuffer(640) });
-    microphone.emit(frame());
-    microphone.emit(frame());
-    await flushPromises();
-    expect(vad.calls.map((call) => call.sampleStart)).toEqual([0]);
-
-    vad.resolveNext(decision('open', 'speech_gate_opened', 0.9));
-    await flushPromises();
-    expect(vad.calls.map((call) => call.sampleStart)).toEqual([0, 320]);
-    vad.resolveNext(decision('closed', 'speech_gate_closed', 0.1));
-    await flushPromises();
-
-    const audioMessages = FakeWebSocket.instances[1]?.messages ?? [];
-    expect(readStatus(audioMessages[0]).status_seq).toBe(1);
-    expect(readStatus(audioMessages[1])).toMatchObject({
-      status_seq: 2,
-      boundary_sample: 0,
-      vad: { event: 'speech_gate_opened' },
-    });
-    expect(audioMessages[2]).toBeInstanceOf(ArrayBuffer);
-    expect(readStatus(audioMessages[3])).toMatchObject({
-      status_seq: 3,
-      boundary_sample: 320,
-      vad: { event: 'speech_gate_closed' },
-    });
-    expect(audioMessages[4]).toBeInstanceOf(ArrayBuffer);
-
-    const settings = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
-    expect(settings.transcription.client_vad).toBe(true);
-    expect(settings.translation).toEqual({});
-    await session.stop();
-  });
-
-  it('does not construct a model worker when client VAD is disabled', async () => {
-    const microphone = new FakeMicrophone();
-    const factory = vi.fn(() => new DeferredVad());
-    const session = new RealtimeTranslationSession(endpoints, microphone, 'token', factory);
-    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
-    microphone.emit({ samples: new Float32Array(320), pcm16: new ArrayBuffer(640) });
-    await flushPromises();
-
-    expect(factory).not.toHaveBeenCalled();
-    const settings = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
-    expect(settings.transcription.client_vad).toBe(false);
-    expect(settings.translation).toEqual({});
-    expect(FakeWebSocket.instances[1]?.url).toContain('audio_format=pcm16');
-    expect(FakeWebSocket.instances[1]?.messages[1]).toBeInstanceOf(ArrayBuffer);
-    await session.stop();
-  });
-
-  it('encodes frames as Opus and keeps the sample cursor independent of payload size', async () => {
-    const microphone = new FakeMicrophone();
-    const encoder = new FakeAudioEncoder();
-    const session = new RealtimeTranslationSession(
-      endpoints,
-      microphone,
-      'token',
-      () => new DeferredVad(),
-      {
-        resolveFormat: () => 'opus',
-        createOpusEncoder: () => encoder,
-      },
-    );
-    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
-
-    microphone.emit({ samples: new Float32Array(320), pcm16: new ArrayBuffer(640) });
-    microphone.emit({ samples: new Float32Array(320), pcm16: new ArrayBuffer(640) });
-    await flushPromises();
-
-    const audioSocket = FakeWebSocket.instances[1];
-    expect(encoder.initialized).toBe(true);
-    expect(encoder.inputs).toHaveLength(2);
-    expect(audioSocket?.url).toContain('audio_format=opus');
-    expect(Array.from(new Uint8Array(audioSocket?.messages[1] as ArrayBuffer))).toEqual([1, 2, 3]);
-    expect(Array.from(new Uint8Array(audioSocket?.messages[2] as ArrayBuffer))).toEqual([2, 2, 3]);
-    expect(session.getSnapshot().phase).toBe('recording');
-
-    await session.stop();
-    expect(encoder.disposed).toBe(true);
-  });
-
-  it('aborts instead of dropping PCM when the FIFO exceeds 200ms', async () => {
-    const microphone = new FakeMicrophone();
-    const vad = new DeferredVad();
-    const session = new RealtimeTranslationSession(endpoints, microphone, 'token', () => vad);
-    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
-    for (let index = 0; index < 11; index += 1) {
-      microphone.emit({ samples: new Float32Array(320), pcm16: new ArrayBuffer(640) });
-    }
-    await flushPromises();
-
-    expect(session.getSnapshot()).toMatchObject({
-      phase: 'error',
-      error: 'Audio processing latency exceeded 200 ms. The session was stopped safely.',
-    });
-  });
-
-  it('sends a capturing close event before the paused lifecycle status', async () => {
-    const microphone = new FakeMicrophone();
-    const vad = new DeferredVad();
-    const session = new RealtimeTranslationSession(endpoints, microphone, 'token', () => vad);
-    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
-    microphone.emit({ samples: new Float32Array(320), pcm16: new ArrayBuffer(640) });
-    await flushPromises();
-    vad.resolveNext(decision('open', 'speech_gate_opened', 0.9));
-    await flushPromises();
-    await session.pause();
-
-    const messages = FakeWebSocket.instances[1]?.messages ?? [];
-    expect(readStatus(messages[3])).toMatchObject({
-      boundary_sample: 320,
-      mic: { state: 'capturing' },
-      vad: { enabled: true, event: 'speech_gate_closed' },
-    });
-    expect(readStatus(messages[4])).toMatchObject({
-      boundary_sample: 320,
-      mic: { state: 'paused' },
-      vad: { enabled: true },
-    });
-    expect(readStatus(messages[4]).vad).not.toHaveProperty('event');
-    await session.stop();
-  });
-});
-
-function decision(
-  gate: 'open' | 'closed',
-  event: 'speech_gate_opened' | 'speech_gate_closed',
-  probability: number,
-): VadDecision {
+function chunk(payload: number[], gateEvent?: string, validSampleCount = 320): AudioChunk {
   return {
-    enabled: true,
-    ready: true,
-    mode: 'silero',
-    gate,
-    isSpeech: gate === 'open',
-    probability,
-    level: gate === 'open' ? 'veryStrong' : 'off',
-    event,
-    lastSpeechSampleEnd: gate === 'open' ? 320 : 320,
+    data: { microphone: Uint8Array.from(payload) }, trackSource: 'microphone', codec: 'opus',
+    sampleRate: 16000, sample: 77, sampleCount: 320, validSampleCount,
+    durationMs: 20, timestamp: 1234, rms: 0.1, gateEvent,
   };
 }
 
-function readStatus(value: string | ArrayBuffer | undefined): Record<string, any> {
-  if (typeof value !== 'string') throw new Error('Expected JSON status');
-  return JSON.parse(value) as Record<string, any>;
-}
+const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test' };
+const input = { sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true };
+const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+const status = (value: string | ArrayBuffer) => JSON.parse(value as string);
 
-async function flushPromises(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-}
+beforeEach(() => {
+  FakeSocket.instances = [];
+  vi.stubGlobal('WebSocket', FakeSocket);
+  vi.stubGlobal('window', { setTimeout, clearTimeout, addEventListener() {}, removeEventListener() {} });
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/end')) FakeSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'conversation.ended' }) });
+    return new Response(JSON.stringify(url.endsWith('/conversations') ? { conversation_id: 'conversation-1' } : {}), { status: 200 });
+  }));
+});
+afterEach(() => vi.unstubAllGlobals());
+
+describe('SDK output transport', () => {
+  it('waits for native permit and model-key readiness before starting microphone capture', async () => {
+    const microphone = new FakeMicrophone();
+    let approved!: () => void;
+    microphone.authorization = new Promise((resolve) => { approved = resolve; });
+    const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
+    const starting = session.start(input);
+    await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2));
+    expect(microphone.started).toBe(false);
+    expect(session.getSnapshot().phase).toBe('connecting');
+    expect(FakeSocket.instances[1]?.messages).toEqual([]);
+    approved();
+    await starting;
+    expect(microphone.started).toBe(true);
+    expect(session.getSnapshot().phase).toBe('recording');
+    await session.stop();
+  });
+
+  it('sends engine transitions before unchanged Opus bytes and flush tail before idle', async () => {
+    const microphone = new FakeMicrophone();
+    const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
+    await session.start(input);
+    microphone.emit(chunk([1, 2, 3], 'speech_gate_opened'));
+    microphone.emit(chunk([9], 'speech_gate_closed'));
+    const socket = FakeSocket.instances[1]!;
+    expect(socket.url).toContain('audio_format=opus');
+    expect(status(socket.messages[1])).toMatchObject({ boundary_sample: 0, vad: { event: 'speech_gate_opened' } });
+    expect(Array.from(new Uint8Array(socket.messages[2] as ArrayBuffer))).toEqual([1, 2, 3]);
+    expect(status(socket.messages[3])).toMatchObject({ boundary_sample: 320, vad: { event: 'speech_gate_closed' } });
+    expect(Array.from(new Uint8Array(socket.messages[4] as ArrayBuffer))).toEqual([9]);
+    microphone.tail = chunk([5, 6], undefined, 7);
+    await session.stop();
+    expect(Array.from(new Uint8Array(socket.messages[5] as ArrayBuffer))).toEqual([5, 6]);
+    expect(status(socket.messages[6])).toMatchObject({ boundary_sample: 960, mic: { state: 'idle' } });
+  });
+
+  it('suppresses late output while paused and announces a resumed gate at the uplink cursor', async () => {
+    const microphone = new FakeMicrophone();
+    const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
+    await session.start(input);
+    microphone.emit(chunk([1], 'speech_gate_opened'));
+    await session.pause();
+    const socket = FakeSocket.instances[1]!;
+    const count = socket.messages.length;
+    microphone.emit(chunk([2], 'speech_gate_opened'));
+    expect(socket.messages).toHaveLength(count);
+    await session.resume();
+    microphone.emit(chunk([3], 'speech_gate_opened'));
+    expect(status(socket.messages.at(-2)!)).toMatchObject({ boundary_sample: 320, vad: { event: 'speech_gate_opened' } });
+    await session.stop();
+  });
+
+  it('surfaces SDK processing failures and stops late output', async () => {
+    const microphone = new FakeMicrophone();
+    const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
+    await session.start(input);
+    const socket = FakeSocket.instances[1]!;
+    microphone.fail(new Error('tellus_audio_processing_failed'));
+    microphone.emit(chunk([1]));
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'tellus_audio_processing_failed' });
+    expect(socket.messages.filter((message) => message instanceof ArrayBuffer)).toEqual([]);
+    await session.stop();
+  });
+
+  it('preserves server VAD settings without changing the Rust Opus codec', async () => {
+    const microphone = new FakeMicrophone();
+    const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
+    await session.start({ ...input, clientVad: false });
+    expect(microphone.preparedVad).toBe(false);
+    expect(FakeSocket.instances[1]?.url).toContain('audio_format=opus');
+    const settings = JSON.parse(String(vi.mocked(fetch).mock.calls[1]?.[1]?.body));
+    expect(settings.transcription.client_vad).toBe(false);
+    await session.stop();
+  });
+});

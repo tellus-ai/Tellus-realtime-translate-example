@@ -1,5 +1,6 @@
 import {
   createConversation,
+  buildAudioWebSocketUrl,
   endConversation,
   saveInterpretationSettings,
 } from '../src/api/conversationApi';
@@ -154,4 +155,11 @@ describe('conversation API retries', () => {
       expect(requests).toHaveLength(2);
     });
   });
+});
+
+// 전송한 Opus payload와 URL의 server decoder가 일치해야 한다.
+test('SDK Opus 전송 형식을 선언한다', () => {
+  const url = new URL(buildAudioWebSocketUrl(endpoints, 'id with space'));
+  expect(url.searchParams.get('audio_format')).toBe('opus');
+  expect(url.searchParams.get('conversation_id')).toBe('id with space');
 });

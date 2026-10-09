@@ -1,154 +1,76 @@
-import { Platform } from 'react-native';
-import { AudioManager, AudioRecorder } from 'react-native-audio-api';
-import { PERMISSIONS, request, RESULTS } from 'react-native-permissions';
-import { PcmFramePipeline, type PcmAudioFrame } from './PcmFramePipeline';
+import { AudioEngine, type AudioCapture, type AudioChunk } from '@tellus-ai/audio-sdk/react-native';
+import { attachEngineAuthorization, type EngineAuthorizationController } from '@tellus-ai/audio-sdk/authorization';
 
 export interface MicrophoneRecorder {
-  prepare(): Promise<void>;
-  start(
-    onFrame: (frame: PcmAudioFrame) => void,
-    onError: (error: Error) => void,
-  ): Promise<void>;
+  prepare(clientVad: boolean): Promise<void>;
+  authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void>;
+  releaseAuthorization(): void;
+  start(onFrame: (frame: AudioChunk) => void, onError: (error: Error) => void): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
   stop(): Promise<void>;
 }
 
+/** OS 마이크·DSP·VAD·인코더는 SDK capture가 소유한다. 앱은 전송 payload만 전달한다. */
 export class NativeMicrophone implements MicrophoneRecorder {
-  private recorder: AudioRecorder | null = null;
-  private pipeline = new PcmFramePipeline();
-  private paused = false;
-  private frameHandler: ((frame: PcmAudioFrame) => void) | null = null;
-  private errorHandler: ((error: Error) => void) | null = null;
-  private callbackGeneration = 0;
+  private capture?: AudioCapture;
+  private authorization?: EngineAuthorizationController;
+  private callback?: Parameters<AudioCapture['start']>[0];
+  private generation = 0;
 
-  async prepare(): Promise<void> {
-    const permission = Platform.OS === 'ios' ? PERMISSIONS.IOS.MICROPHONE : PERMISSIONS.ANDROID.RECORD_AUDIO;
-    const status = await request(permission);
-    if (status !== RESULTS.GRANTED && status !== RESULTS.LIMITED) {
-      throw new Error('Microphone permission is required for realtime translation.');
-    }
-  }
-
-  async start(
-    onFrame: (frame: PcmAudioFrame) => void,
-    onError: (error: Error) => void,
-  ): Promise<void> {
-    await this.prepare();
-    AudioManager.setAudioSessionOptions({
-      iosCategory: 'playAndRecord',
-      iosMode: 'voiceChat',
-      iosOptions: ['defaultToSpeaker', 'allowBluetoothHFP'],
+  async prepare(clientVad: boolean): Promise<void> {
+    await this.stop();
+    const generation = ++this.generation;
+    const engine = await AudioEngine.init({
+      micEnabled: true, processing: { sampleRate: 16000, chunkDurationMs: 20 },
+      transport: { codec: 'opus', bitrateBps: 64000 },
+      denoiseEnabled: process.env.EXPO_PUBLIC_TELLUS_DENOISE !== 'false', vadEnabled: clientVad,
+      echoCancellationEnabled: true, micAgc2Enabled: false,
     });
-    await AudioManager.setAudioSessionActivity(true);
-
-    const recorder = new AudioRecorder();
-    this.recorder = recorder;
-    this.frameHandler = onFrame;
-    this.errorHandler = onError;
-    this.paused = false;
-    this.pipeline.reset();
-
-    try {
-      this.registerAudioReady(recorder);
-      let errorReported = false;
-      recorder.onError(({ message }) => {
-        if (this.recorder !== recorder || errorReported) return;
-        errorReported = true;
-        this.invalidateAudioReady(recorder);
-        recorder.clearOnError();
-        this.pipeline.reset();
-        this.errorHandler?.(new Error(message || 'An error occurred while recording audio.'));
-      });
-      const result = await recorder.start();
-      if (this.recorder !== recorder) {
-        recorder.clearOnAudioReady();
-        recorder.clearOnError();
-        await recorder.stop().catch(() => {});
-        return;
-      }
-      if (result.status === 'error') {
-        throw new Error(result.message || 'Unable to start microphone recording.');
-      }
-    } catch (error) {
-      if (this.recorder === recorder) {
-        this.recorder = null;
-        this.frameHandler = null;
-        this.errorHandler = null;
-      }
-      this.invalidateAudioReady(recorder);
-      recorder.clearOnError();
-      await recorder.stop().catch(() => {});
-      await AudioManager.setAudioSessionActivity(false).catch(() => {});
-      throw error;
-    }
+    if (generation === this.generation) this.capture = engine.createCapture();
   }
 
-  private registerAudioReady(recorder: AudioRecorder): void {
-    const generation = ++this.callbackGeneration;
-    const registration = recorder.onAudioReady(
-      { sampleRate: 16_000, bufferLength: 320, channelCount: 1 },
-      (event) => {
-        if (this.recorder !== recorder || this.paused || generation !== this.callbackGeneration) return;
-        for (const frame of this.pipeline.push(event.buffer.getChannelData(0), event.buffer.sampleRate)) {
-          this.frameHandler?.(frame);
-        }
-      },
-    );
-    if (registration.status === 'error') {
-      recorder.clearOnAudioReady();
-      throw new Error(registration.message);
-    }
+  async authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void> {
+    if (!this.capture) throw new Error('Audio capture is unavailable.');
+    this.releaseAuthorization();
+    this.authorization = attachEngineAuthorization(socket, this.capture, {
+      conversationId, getAccessToken: () => accessToken, onError,
+    });
+    await this.authorization.ready;
   }
 
-  private invalidateAudioReady(recorder: AudioRecorder): void {
-    this.callbackGeneration += 1;
-    recorder.clearOnAudioReady();
+  releaseAuthorization(): void {
+    this.authorization?.dispose();
+    this.authorization = undefined;
   }
 
-  async pause(): Promise<void> {
-    if (!this.recorder || this.paused) return;
-    const recorder = this.recorder;
-    this.paused = true;
-    this.invalidateAudioReady(recorder);
-    this.pipeline.reset();
-    try {
-      recorder.pause();
-    } catch (error) {
-      this.paused = false;
-      this.registerAudioReady(recorder);
-      throw error;
-    }
+  async start(onFrame: (frame: AudioChunk) => void, onError: (error: Error) => void): Promise<void> {
+    if (!this.capture) throw new Error('Audio capture is unavailable.');
+    this.callback = (error, chunk) => { if (error) onError(error); else if (chunk) onFrame(chunk); };
+    await this.capture.start(this.callback);
   }
+
+  async pause(): Promise<void> { await this.capture?.pause(); }
 
   async resume(): Promise<void> {
-    if (!this.recorder || !this.paused) return;
-    const recorder = this.recorder;
-    this.pipeline.reset();
-    this.paused = false;
-    try {
-      this.registerAudioReady(recorder);
-      recorder.resume();
-    } catch (error) {
-      this.paused = true;
-      this.invalidateAudioReady(recorder);
-      throw error;
-    }
+    if (!this.capture || !this.callback) throw new Error('Unable to resume the microphone stream.');
+    const status = await this.capture.getStatus();
+    if (status.state === 'stopped') await this.capture.start(this.callback);
+    else await this.capture.resume();
   }
 
   async stop(): Promise<void> {
-    const recorder = this.recorder;
-    this.recorder = null;
-    this.paused = true;
-    this.frameHandler = null;
-    this.errorHandler = null;
-    this.pipeline.reset();
-    if (recorder) {
-      this.invalidateAudioReady(recorder);
-      recorder.clearOnError();
-      await recorder.stop().catch(() => {});
+    ++this.generation;
+    const capture = this.capture;
+    this.capture = undefined;
+    try {
+      const status = await capture?.getStatus();
+      if (status?.state === 'running' || status?.state === 'paused') await capture?.stop();
     }
-    await AudioManager.setAudioSessionActivity(false).catch(() => {});
-    this.paused = false;
+    finally {
+      this.releaseAuthorization();
+      await capture?.dispose();
+      this.callback = undefined;
+    }
   }
 }

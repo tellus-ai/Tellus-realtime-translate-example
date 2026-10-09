@@ -19,10 +19,11 @@
     "test": "TMPDIR=/tmp vitest run",
     "test:live": "node --env-file=.env scripts/live-smoke.mjs",
     "test:engine-auth": "node --env-file=.env scripts/engine-authorization-smoke.mjs",
-    "typecheck": "tsc -p tsconfig.json --pretty false && tsc -p tsconfig.electron.json --noEmit --pretty false"
+    "typecheck": "tsc -p tsconfig.json --pretty false && tsc -p tsconfig.electron.json --noEmit --pretty false",
+    "test:engine-local": "node scripts/engine-local-smoke.mjs"
   },
   "dependencies": {
-    "@tellus-ai/audio-sdk": "git+https://github.com/tellus-ai/tellus-audio-sdk.git#v0.2.2",
+    "@tellus-ai/audio-sdk": "file:../../tellus-audio-sdk",
     "ws": "^8.21.3"
   },
   "devDependencies": {

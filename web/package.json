@@ -6,20 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "predev": "npm run prepare:vad",
-    "prebuild": "npm run prepare:vad",
-    "postinstall": "npm run sync:ort-assets",
-    "prepare:vad": "npm run verify:vad-model && npm run sync:ort-assets",
-    "sync:ort-assets": "node scripts/VADSyncOrtAssets.mjs",
-    "verify:vad-model": "node scripts/VADVerifyModel.mjs",
+    "predev": "npm run prepare:engine",
+    "prebuild": "npm run prepare:engine",
     "preview": "vite preview",
     "test": "TMPDIR=/tmp vitest run",
     "test:live": "node --env-file=.env scripts/live-smoke.mjs",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "prepare:engine": "node scripts/prepare-engine-assets.mjs",
+    "test:engine-browser": "TMPDIR=/private/tmp node scripts/browser-engine-e2e.mjs"
   },
   "dependencies": {
+    "@tellus-ai/audio-sdk": "file:../../tellus-audio-sdk",
     "@vitejs/plugin-react": "latest",
-    "onnxruntime-web": "1.24.1",
     "react": "latest",
     "react-dom": "latest",
     "vite": "latest"
@@ -27,6 +25,7 @@
   "devDependencies": {
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "playwright": "^1.58.2",
     "typescript": "latest",
     "vitest": "latest",
     "ws": "^8.21.3"

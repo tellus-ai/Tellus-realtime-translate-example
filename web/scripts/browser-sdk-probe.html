@@ -1,0 +1,88 @@
+<!doctype html><meta charset="utf-8"><button id="run">Run real SDK</button><pre id="result"></pre>
+<script type="module">
+import { AudioEngine } from '/tellus-audio/browser/index.js';
+import { attachEngineAuthorization } from '/tellus-audio/authorization/realtime.js';
+const sampleRate = Number(new URLSearchParams(location.search).get('sampleRate') ?? 16000);
+const modelFamily = sampleRate === 48000 ? 'fe-s48' : 'fe-s16';
+const frameSamples = sampleRate / 50;
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+window.probe = { state: 'idle', chunks: [], errors: [], checks: {} };
+const check = (name, value) => { if (!value) throw new Error(name); window.probe.checks[name] = true; };
+document.querySelector('#run').onclick = async () => {
+  const probe = window.probe;
+  probe.state = 'running';
+  let engine, authorization, socket;
+  try {
+    const base = new URL('/tellus-audio/', location.href);
+    engine = await AudioEngine.init({ processing: { sampleRate, chunkDurationMs: 20 }, transport: { codec: 'opus' }, denoiseEnabled: true, vadEnabled: true, echoCancellationEnabled: true }, {
+      engineModuleUrl: new URL('tellus-audio-engine.mjs', base).href,
+      wasmUrl: new URL('tellus-audio-engine.wasm', base).href,
+      ortWasmBaseUrl: new URL('ort/', base).href,
+      encryptedModels: [modelFamily, 'silero-vad'].map((id) => new URL(`models/${id}.temc`, base).href),
+    });
+    const capture = engine.createCapture();
+    let refused = false;
+    try { await capture.start(() => {}); } catch (error) { refused = error.message === 'engine_authorization_required'; }
+    check('start_requires_native_permit', refused);
+    check('no_microphone_before_permit', window.micRequests.length === 0);
+    socket = new WebSocket(location.origin.replace('http:', 'ws:') + '/audio?conversation_id=conversation-1&audio_format=opus');
+    authorization = attachEngineAuthorization(socket, capture, { conversationId: 'conversation-1', getAccessToken: () => 'test-access-token', onError: (error) => probe.errors.push(error.message) });
+    await authorization.ready;
+    const loaded = await capture.getStatus();
+    check('encrypted_models_loaded', loaded.modelsLoaded.includes(modelFamily) && loaded.modelsLoaded.includes('silero-vad'));
+    await capture.start((error, chunk) => {
+      if (error) { probe.errors.push(error.message); return; }
+      if (chunk) probe.chunks.push({ codec: chunk.codec, sampleRate: chunk.sampleRate, sample: chunk.sample, count: chunk.sampleCount, valid: chunk.validSampleCount, bytes: chunk.data.microphone.length, rms: chunk.rms, gate: chunk.gateEvent, gap: chunk.discontinuity?.reason, lag: Date.now() - chunk.timestamp });
+    });
+    await delay(1400);
+    check('real_encoded_chunks', probe.chunks.length > 20 && probe.chunks.every((chunk) => chunk.codec === 'opus' && chunk.sampleRate === sampleRate && chunk.count === frameSamples && chunk.valid <= frameSamples && chunk.bytes > 0));
+    const unchanged = probe.chunks.length;
+    await capture.setDenoiseEnabled(true);
+    await delay(100);
+    check('same_denoise_preserves_capture', probe.chunks.length > unchanged && probe.chunks.slice(unchanged).every((chunk) => !chunk.gap));
+    await capture.pause();
+    const paused = probe.chunks.length;
+    await delay(150);
+    check('pause_blocks_callbacks', probe.chunks.length === paused);
+    await capture.resume();
+    await delay(400);
+    check('resume_produces_new_chunks', probe.chunks.length > paused);
+    const reset = probe.chunks.length;
+    await capture.reset();
+    await delay(400);
+    check('reset_produces_new_chunks', probe.chunks.length > reset);
+    await capture.setDenoiseEnabled(false);
+    check('native_denoise_off', !(await capture.getStatus()).denoiseEnabled);
+    await capture.setDenoiseEnabled(true);
+    check('native_denoise_on', (await capture.getStatus()).denoiseEnabled);
+    await capture.playback(Float32Array.from({ length: 9600 }, (_, i) => Math.sin(i * Math.PI * 2 * 330 / 48000) * 0.1), 48000);
+    check('raw_playback_completes', true);
+    const encoded = await (await fetch('/stereo.wav')).arrayBuffer();
+    await capture.playbackEncoded(encoded);
+    check('stereo_encoded_playback_completes', encoded.byteLength > 44);
+    const cancelled = capture.playback(new Float32Array(48000), 48000);
+    await delay(25);
+    await capture.cancelPlayback();
+    await cancelled;
+    check('playback_cancellation_completes', true);
+    const until = performance.now() + 9000;
+    while (!probe.chunks.some((chunk) => chunk.gate === 'speech_gate_closed') && performance.now() < until) await delay(50);
+    check('actual_silero_gate_opened', probe.chunks.some((chunk) => chunk.gate === 'speech_gate_opened'));
+    check('actual_silero_gate_closed', probe.chunks.some((chunk) => chunk.gate === 'speech_gate_closed'));
+    check('actual_signal_nonzero', probe.chunks.some((chunk) => chunk.rms > 0.0001));
+    await capture.stop();
+    check('stop_closes_os_input', window.micStreams.every((stream) => stream.getTracks().every((track) => track.readyState === 'ended')));
+    const stopped = probe.chunks.length;
+    await delay(100);
+    check('stop_blocks_late_callbacks', probe.chunks.length === stopped);
+    check('no_processing_errors', probe.errors.length === 0);
+    probe.state = 'passed';
+  } catch (error) { probe.errors.push(error.stack ?? error.message); probe.state = 'failed'; }
+  finally {
+    authorization?.dispose();
+    socket?.close();
+    await engine?.dispose().catch((error) => probe.errors.push(error.message));
+    document.querySelector('#result').textContent = JSON.stringify(probe.checks);
+  }
+};
+</script>

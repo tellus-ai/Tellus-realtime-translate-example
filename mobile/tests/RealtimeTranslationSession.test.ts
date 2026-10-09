@@ -1,6 +1,5 @@
 import type { MicrophoneRecorder } from '../src/audio/NativeMicrophone';
-import type { PcmAudioFrame } from '../src/audio/PcmFramePipeline';
-import type { VadRuntime } from '../src/audio/VADClient';
+import type { AudioChunk } from '@tellus-ai/audio-sdk/react-native';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 
 const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test', appOrigin: 'https://app.example.test' };
@@ -36,12 +35,24 @@ class FakeMicrophone implements MicrophoneRecorder {
   resumeError: Error | null = null;
   /** A start and a pause finish only when these resolve. */
   startGate: Promise<void> = Promise.resolve();
+  authorizationGate: Promise<void> = Promise.resolve();
   pauseGate: Promise<void> = Promise.resolve();
-  private onFrame: ((frame: PcmAudioFrame) => void) | null = null;
+  private onFrame: ((frame: AudioChunk) => void) | null = null;
   private onError: ((error: Error) => void) | null = null;
 
-  async prepare(): Promise<void> {}
-  async start(onFrame: (frame: PcmAudioFrame) => void, onError: (error: Error) => void): Promise<void> {
+  private vad = false;
+  private gateOpen = false;
+  async prepare(vad: boolean): Promise<void> { this.vad = vad; }
+  async authorize(socket: WebSocket): Promise<void> {
+    if (socket.readyState !== WebSocket.OPEN) await new Promise<void>(resolve => {
+      const opened = socket.onopen;
+      socket.onopen = event => { opened?.call(socket, event); resolve(); };
+    });
+    await this.authorizationGate;
+    this.gateOpen = false;
+  }
+  releaseAuthorization(): void { this.capturing = false; }
+  async start(onFrame: (frame: AudioChunk) => void, onError: (error: Error) => void): Promise<void> {
     await this.startGate;
     if (this.startError) throw this.startError;
     this.onFrame = onFrame;
@@ -50,6 +61,7 @@ class FakeMicrophone implements MicrophoneRecorder {
   }
   async pause(): Promise<void> {
     this.capturing = false;
+    this.gateOpen = false;
     await this.pauseGate;
   }
   async resume(): Promise<void> {
@@ -61,21 +73,17 @@ class FakeMicrophone implements MicrophoneRecorder {
     this.capturing = false;
   }
   emit(): void {
-    this.onFrame?.({ samples: new Float32Array(320), pcm16: new ArrayBuffer(640), sampleCount: 320 });
+    const event = this.vad && !this.gateOpen ? 'speech_gate_opened' : undefined;
+    this.gateOpen = this.vad;
+    this.onFrame?.({ data: { microphone: new Uint8Array(30) }, trackSource: 'microphone', codec: 'opus',
+      sampleRate: 16000, sampleCount: 320, validSampleCount: 320, durationMs: 20, sample: 0, timestamp: 0, rms: 0,
+      gateEvent: event });
   }
   /** The native recorder reports an error. */
   fail(error: Error): void {
     this.onError?.(error);
   }
 }
-
-/** Reports speech for every frame, so the gate opens on the first frame after every reset. */
-const speechRuntime: VadRuntime = {
-  initialize: async () => {},
-  process: async () => 0.9,
-  reset: () => {},
-  dispose: async () => {},
-};
 
 class FakeSocket {
   static readonly CONNECTING = 0;
@@ -182,7 +190,7 @@ function result(eventType: string, orderSeq: number, text: string, targetLanguag
 
 function createSession() {
   const microphone = new FakeMicrophone();
-  const session = new RealtimeTranslationSession(endpoints, microphone, 'token', speechRuntime);
+  const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
   return { session, microphone };
 }
 
@@ -1123,4 +1131,19 @@ describe('RealtimeTranslationSession stop', () => {
     expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'Temporarily unavailable.', resultConnection: 'closed' });
     expect(resultSocket.readyState).toBe(FakeSocket.CLOSED);
   });
+});
+
+// socket open만으로 OS 캡처를 시작하면 permit/key 준비 전 데이터가 유출된다.
+test('permit과 모델키 준비 완료 후 마이크를 시작한다', async () => {
+  const { session, microphone } = createSession();
+  const held = gate();
+  microphone.authorizationGate = held.opened;
+  const starting = session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+  await flush();
+  expect(session.getSnapshot().audioConnection).toBe('open');
+  expect(session.getSnapshot().phase).toBe('connecting');
+  expect(microphone.capturing).toBe(false);
+  held.open();
+  await starting;
+  expect(microphone.capturing).toBe(true);
 });

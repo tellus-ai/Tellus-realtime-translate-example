@@ -30,7 +30,7 @@ export function VADStatus({ snapshot }: { snapshot: ClientVadSnapshot }) {
   return (
     <p className="phase">
       VAD: {snapshot.enabled
-        ? `${snapshot.ready ? 'Ready' : 'Loading model'} · ${snapshot.gate} · ${snapshot.level}`
+        ? `${snapshot.ready ? 'Ready' : 'Loading model'} · ${snapshot.gate}`
         : 'Server VAD'}
     </p>
   );

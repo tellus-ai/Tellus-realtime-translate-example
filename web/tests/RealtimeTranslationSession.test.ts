@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MicrophoneRecorder } from '../src/audio/BrowserMicrophone';
-import type { PcmFrame } from '../src/audio/PcmFramePipeline';
-import type { ClientVadProcessor, VadDecision } from '../src/audio/vad/VADTypes';
+import type { AudioChunk } from '@tellus-ai/audio-sdk/browser';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 
 const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test' };
@@ -35,11 +34,31 @@ class FakeMicrophone implements MicrophoneRecorder {
   capturing = false;
   startError: Error | null = null;
   resumeError: Error | null = null;
-  /** A pause finishes only when this resolves. */
   pauseGate: Promise<void> = Promise.resolve();
-  private onFrame: ((frame: PcmFrame) => void) | null = null;
+  resumeGate: Promise<void> = Promise.resolve();
+  authorizationGate: Promise<void> = Promise.resolve();
+  private clientVad = false;
+  private gateOpen = false;
+  private sample = 0;
+  private onFrame: ((frame: AudioChunk) => void) | null = null;
 
-  async start(onFrame: (frame: PcmFrame) => void): Promise<void> {
+  async prepare(clientVad: boolean): Promise<void> { this.clientVad = clientVad; }
+
+  async authorize(socket: WebSocket): Promise<void> {
+    if (socket.readyState !== WebSocket.OPEN) {
+      await new Promise<void>((resolve) => {
+        const opened = socket.onopen;
+        socket.onopen = (event) => { opened?.call(socket, event); resolve(); };
+      });
+    }
+    await this.authorizationGate;
+    this.gateOpen = false;
+    this.sample = 0;
+  }
+
+  releaseAuthorization(): void { this.capturing = false; }
+
+  async start(onFrame: (frame: AudioChunk) => void): Promise<void> {
     if (this.startError) throw this.startError;
     this.onFrame = onFrame;
     this.capturing = true;
@@ -48,53 +67,27 @@ class FakeMicrophone implements MicrophoneRecorder {
   async pause(): Promise<void> {
     await this.pauseGate;
     this.capturing = false;
+    this.gateOpen = false;
   }
 
   async resume(): Promise<void> {
+    await this.resumeGate;
     if (this.resumeError) throw this.resumeError;
+    this.gateOpen = false;
     this.capturing = true;
   }
 
-  async stop(): Promise<void> {
-    this.onFrame = null;
-    this.capturing = false;
-  }
+  async stop(): Promise<void> { this.onFrame = null; this.capturing = false; }
 
   emit(): void {
-    this.onFrame?.({ samples: new Float32Array(320), pcm16: new ArrayBuffer(640) });
-  }
-}
-
-/** Reports speech from the first frame after every reset. */
-class OpenGateVad implements ClientVadProcessor {
-  resetCount = 0;
-  /** A reset finishes only when this resolves. */
-  resetGate: Promise<void> = Promise.resolve();
-  private open = false;
-
-  async initialize(): Promise<void> {}
-  async dispose(): Promise<void> {}
-
-  async reset(): Promise<void> {
-    this.resetCount += 1;
-    this.open = false;
-    await this.resetGate;
-  }
-
-  async process(): Promise<VadDecision> {
-    const event = this.open ? undefined : 'speech_gate_opened' as const;
-    this.open = true;
-    return {
-      enabled: true,
-      ready: true,
-      mode: 'silero',
-      gate: 'open',
-      isSpeech: true,
-      probability: 0.9,
-      level: 'veryStrong',
-      event,
-      lastSpeechSampleEnd: null,
-    };
+    const event = this.clientVad && !this.gateOpen ? 'speech_gate_opened' : undefined;
+    this.gateOpen = true;
+    this.onFrame?.({
+      data: { microphone: new Uint8Array([1, 2, 3]) }, trackSource: 'microphone', codec: 'opus',
+      sampleRate: 16000, sampleCount: 320, validSampleCount: 320,
+      durationMs: 20, sample: this.sample, timestamp: 0, rms: 0.1, gateEvent: event,
+    });
+    this.sample += 320;
   }
 }
 
@@ -215,9 +208,8 @@ function result(eventType: string, orderSeq: number, text: string, targetLanguag
 
 function createSession() {
   const microphone = new FakeMicrophone();
-  const vad = new OpenGateVad();
-  const session = new RealtimeTranslationSession(endpoints, microphone, 'token', () => vad);
-  return { session, microphone, vad };
+  const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
+  return { session, microphone };
 }
 
 async function startSession(clientVad = false) {
@@ -442,7 +434,7 @@ describe('RealtimeTranslationSession when a Result message is malformed', () => 
 
 describe('RealtimeTranslationSession reconnects', () => {
   it('reopens only /audio, after retry_after_ms, with a fresh sample cursor', async () => {
-    const { session, microphone, vad, resultSocket, audioSocket } = await startSession(true);
+    const { session, microphone, resultSocket, audioSocket } = await startSession(true);
     microphone.emit();
     microphone.emit();
     await flush();
@@ -467,7 +459,6 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(resultSocket.detached).toBe(false);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
     expect(microphone.capturing).toBe(true);
-    expect(vad.resetCount).toBe(1);
 
     microphone.emit();
     await flush();
@@ -647,10 +638,10 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(socketKinds()).toEqual(['result', 'audio', 'audio']);
   });
 
-  it('reopens /audio only after the VAD reset has finished', async () => {
-    const { vad, audioSocket } = await startSession(true);
+  it('reopens /audio only after native capture shutdown has finished', async () => {
+    const { microphone, audioSocket } = await startSession(true);
     const held = gate();
-    vad.resetGate = held.opened;
+    microphone.pauseGate = held.opened;
     audioSocket.serverClose(1006);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(socketKinds()).toEqual(['result', 'audio']);
@@ -702,7 +693,7 @@ describe('RealtimeTranslationSession reconnects', () => {
 
   it('reconnects at once on the browser online event', async () => {
     const { session, resultSocket, audioSocket } = await startSession();
-    expect([...windowListeners.keys()]).toEqual(['online']);
+    expect([...windowListeners.keys()]).toEqual(['online', 'visibilitychange']);
     resultSocket.serverClose(1006);
     audioSocket.serverClose(1006);
     await vi.advanceTimersByTimeAsync(300);
@@ -752,11 +743,11 @@ describe('RealtimeTranslationSession pause and resume while /audio reconnects', 
     expect(frames(reopened)).toHaveLength(1);
   });
 
-  it('resumes after the reconnect when /audio closes while Resume waits for the VAD reset', async () => {
-    const { session, microphone, vad, audioSocket } = await startSession(true);
+  it('resumes after the reconnect when /audio closes while native Resume is pending', async () => {
+    const { session, microphone, audioSocket } = await startSession(true);
     await session.pause();
     const held = gate();
-    vad.resetGate = held.opened;
+    microphone.resumeGate = held.opened;
     const resuming = session.resume();
     await flush();
     audioSocket.serverClose(1006);
@@ -783,7 +774,7 @@ describe('RealtimeTranslationSession pause and resume while /audio reconnects', 
   });
 
   it('stays paused after the reconnect when /audio closes while Pause waits for the microphone', async () => {
-    const { session, microphone, vad, audioSocket } = await startSession(true);
+    const { session, microphone, audioSocket } = await startSession(true);
     const held = gate();
     microphone.pauseGate = held.opened;
     const pausing = session.pause();
@@ -795,9 +786,8 @@ describe('RealtimeTranslationSession pause and resume while /audio reconnects', 
     await flush();
 
     // The reconnect owns the phase now; Pause must not put `paused` there before `/audio` is back.
-    // Pause stops where it was: the VAD is reset once, by the reconnect.
+    // Pause stops where it was; the reconnect owns capture restart.
     expect(session.getSnapshot().phase).toBe('reconnecting');
-    expect(vad.resetCount).toBe(1);
     await session.resume();
     expect(session.getSnapshot().phase).toBe('reconnecting');
 

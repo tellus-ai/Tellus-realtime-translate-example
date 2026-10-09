@@ -246,6 +246,23 @@ npm test
 npm run build
 ```
 
+현재 개발 후보는 sibling `../../tellus-audio-sdk`를 사용한다. SDK의 `vendor/darwin-universal`에
+같은 엔진 후보의 universal NAPI와 ORT/models를 준비한 뒤 `npm ci --ignore-scripts`로 설치한다.
+공개 테스트 서명 키를 신뢰하도록 빌드한 테스트 바이너리에서 다음 명령은 원격 API를 호출하지 않는다.
+
+```bash
+TELLUS_ENGINE_TEST_LICENSE=1 npm run test:engine-local
+TELLUS_ENGINE_TEST_LICENSE=1 npm run test:engine-local -- --mic
+```
+
+기본 모드는 실제 SDK/NAPI SHA 일치, 로컬 permit 승인, 장치 접근 전 no-input 설정 거절과
+승인 폐기 후 start/resume 거절을 검증한다. `--mic`는 먼저 `npm run build`한 앱의 initializer로
+Silero를 preload하고 실제 16kHz Opus 캡처, pause/resume/stop 및 종료 후 callback 억제를 확인한다.
+CI의 `.github/workflows/desktop-example.yml`은 장치 없는 모드만 실행한다. private SDK/example
+checkout에는 두 저장소의 contents를 읽을 수 있는 `TELLUS_CI_REPOSITORY_TOKEN`을 설정하고,
+workflow dispatch의 `sdk_ref`/`example_ref`로 후보 revision을 선택한다. 원격 workflow 실행과
+실제 API 자격 증명 사용은 이번 로컬 검증에서 수행하지 않았다. 테스트 키 바이너리는 배포하지 않는다.
+
 After setup, verify real engine authorization against the endpoints in `.env`:
 
 ```bash

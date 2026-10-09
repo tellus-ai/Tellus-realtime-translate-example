@@ -105,12 +105,11 @@ PODS:
   - libwebp/sharpyuv (1.5.0)
   - libwebp/webp (1.5.0):
     - libwebp/sharpyuv
-  - onnxruntime-c (1.27.0)
-  - onnxruntime-react-native (1.24.3):
+  - NitroModules (0.35.4):
     - hermes-engine
-    - onnxruntime-c
     - RCTRequired
     - RCTTypeSafety
+    - React-callinvoker
     - React-Core
     - React-Core-prebuilt
     - React-debug
@@ -129,6 +128,7 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - onnxruntime-c (1.24.3)
   - RCTDeprecation (0.83.9)
   - RCTRequired (0.83.9)
   - RCTSwiftUI (0.83.9)
@@ -2015,148 +2015,7 @@ PODS:
     - React-utils (= 0.83.9)
     - ReactNativeDependencies
   - ReactNativeDependencies (0.83.9)
-  - RNAudioAPI (0.13.1):
-    - hermes-engine
-    - RCTRequired
-    - RCTTypeSafety
-    - React-Core
-    - React-Core-prebuilt
-    - React-debug
-    - React-Fabric
-    - React-featureflags
-    - React-graphics
-    - React-ImageManager
-    - React-jsi
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-renderercss
-    - React-rendererdebug
-    - React-utils
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - ReactNativeDependencies
-    - RNAudioAPI/audioapi (= 0.13.1)
-    - RNWorklets
-    - Yoga
-  - RNAudioAPI/audioapi (0.13.1):
-    - hermes-engine
-    - RCTRequired
-    - RCTTypeSafety
-    - React-Core
-    - React-Core-prebuilt
-    - React-debug
-    - React-Fabric
-    - React-featureflags
-    - React-graphics
-    - React-ImageManager
-    - React-jsi
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-renderercss
-    - React-rendererdebug
-    - React-utils
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - ReactNativeDependencies
-    - RNAudioAPI/audioapi/audioapi_dsp (= 0.13.1)
-    - RNAudioAPI/audioapi/ios (= 0.13.1)
-    - RNAudioAPI/audioapi/miniaudio_impl (= 0.13.1)
-    - RNWorklets
-    - Yoga
-  - RNAudioAPI/audioapi/audioapi_dsp (0.13.1):
-    - hermes-engine
-    - RCTRequired
-    - RCTTypeSafety
-    - React-Core
-    - React-Core-prebuilt
-    - React-debug
-    - React-Fabric
-    - React-featureflags
-    - React-graphics
-    - React-ImageManager
-    - React-jsi
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-renderercss
-    - React-rendererdebug
-    - React-utils
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - ReactNativeDependencies
-    - RNWorklets
-    - Yoga
-  - RNAudioAPI/audioapi/ios (0.13.1):
-    - hermes-engine
-    - RCTRequired
-    - RCTTypeSafety
-    - React-Core
-    - React-Core-prebuilt
-    - React-debug
-    - React-Fabric
-    - React-featureflags
-    - React-graphics
-    - React-ImageManager
-    - React-jsi
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-renderercss
-    - React-rendererdebug
-    - React-utils
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - ReactNativeDependencies
-    - RNWorklets
-    - Yoga
-  - RNAudioAPI/audioapi/miniaudio_impl (0.13.1):
-    - hermes-engine
-    - RCTRequired
-    - RCTTypeSafety
-    - React-Core
-    - React-Core-prebuilt
-    - React-debug
-    - React-Fabric
-    - React-featureflags
-    - React-graphics
-    - React-ImageManager
-    - React-jsi
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-renderercss
-    - React-rendererdebug
-    - React-utils
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - ReactNativeDependencies
-    - RNWorklets
-    - Yoga
   - RNGestureHandler (3.0.2):
-    - hermes-engine
-    - RCTRequired
-    - RCTTypeSafety
-    - React-Core
-    - React-Core-prebuilt
-    - React-debug
-    - React-Fabric
-    - React-featureflags
-    - React-graphics
-    - React-ImageManager
-    - React-jsi
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-renderercss
-    - React-rendererdebug
-    - React-utils
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - ReactNativeDependencies
-    - Yoga
-  - RNPermissions (5.6.0):
     - hermes-engine
     - RCTRequired
     - RCTTypeSafety
@@ -2406,6 +2265,31 @@ PODS:
   - SDWebImageWebPCoder (0.14.6):
     - libwebp (~> 1.0)
     - SDWebImage/Core (~> 5.17)
+  - TellusAudioSdk (0.2.1):
+    - hermes-engine
+    - NitroModules
+    - onnxruntime-c (= 1.24.3)
+    - RCTRequired
+    - RCTTypeSafety
+    - React-callinvoker
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - Yoga (0.0.0)
 
 DEPENDENCIES:
@@ -2426,7 +2310,7 @@ DEPENDENCIES:
   - ExpoSymbols (from `../node_modules/expo-symbols/ios`)
   - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
   - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
-  - onnxruntime-react-native (from `../node_modules/onnxruntime-react-native`)
+  - NitroModules (from `../node_modules/react-native-nitro-modules`)
   - RCTDeprecation (from `../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation`)
   - RCTRequired (from `../node_modules/react-native/Libraries/Required`)
   - RCTSwiftUI (from `../node_modules/react-native/ReactApple/RCTSwiftUI`)
@@ -2500,12 +2384,11 @@ DEPENDENCIES:
   - ReactCodegen (from `build/generated/ios/ReactCodegen`)
   - ReactCommon/turbomodule/core (from `../node_modules/react-native/ReactCommon`)
   - ReactNativeDependencies (from `../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec`)
-  - RNAudioAPI (from `../node_modules/react-native-audio-api`)
   - RNGestureHandler (from `../node_modules/react-native-gesture-handler`)
-  - RNPermissions (from `../node_modules/react-native-permissions`)
   - RNReanimated (from `../node_modules/react-native-reanimated`)
   - RNScreens (from `../node_modules/react-native-screens`)
   - RNWorklets (from `../node_modules/react-native-worklets`)
+  - TellusAudioSdk (from `../../../tellus-audio-sdk`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
 
 SPEC REPOS:
@@ -2555,8 +2438,8 @@ EXTERNAL SOURCES:
   hermes-engine:
     :podspec: "../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec"
     :tag: hermes-v0.14.1
-  onnxruntime-react-native:
-    :path: "../node_modules/onnxruntime-react-native"
+  NitroModules:
+    :path: "../node_modules/react-native-nitro-modules"
   RCTDeprecation:
     :path: "../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation"
   RCTRequired:
@@ -2701,18 +2584,16 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon"
   ReactNativeDependencies:
     :podspec: "../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec"
-  RNAudioAPI:
-    :path: "../node_modules/react-native-audio-api"
   RNGestureHandler:
     :path: "../node_modules/react-native-gesture-handler"
-  RNPermissions:
-    :path: "../node_modules/react-native-permissions"
   RNReanimated:
     :path: "../node_modules/react-native-reanimated"
   RNScreens:
     :path: "../node_modules/react-native-screens"
   RNWorklets:
     :path: "../node_modules/react-native-worklets"
+  TellusAudioSdk:
+    :path: "../../../tellus-audio-sdk"
   Yoga:
     :path: "../node_modules/react-native/ReactCommon/yoga"
 
@@ -2733,12 +2614,12 @@ SPEC CHECKSUMS:
   ExpoRouter: d606824355c288ac18492641c326b571a16762de
   ExpoSymbols: 896159288ad708e1a32dc12c92fe5f90bff01126
   FBLazyVector: dbf74de4626150660e7e6aa61bedca5bfe08ee97
-  hermes-engine: 0f53048448756a0104d84575d43a8b4134b0e883
+  hermes-engine: d9c4ffc40b69c7f372fa9aa7e44f4d68d5113bb8
   libavif: 5f8e715bea24debec477006f21ef9e95432e254d
   libdav1d: 23581a4d8ec811ff171ed5e2e05cd27bad64c39f
   libwebp: 02b23773aedb6ff1fd38cec7a77b81414c6842a8
-  onnxruntime-c: 412ab51682e622e3d77ddc9176aa92517d171820
-  onnxruntime-react-native: f7d130632fb1928c968281066f04be69125ab9b7
+  NitroModules: f45159491c5a0e7161685a301b1c6c11440b3ab1
+  onnxruntime-c: 4a1a1a81da2087869dc9b6357f182952db2df29c
   RCTDeprecation: fd33ca1ccd370f92d656b2b2c42eb64920722170
   RCTRequired: e8df4eae11cd93c621094fd7ebc5519a52de1c6d
   RCTSwiftUI: cef2010e1e5e699600b2064d3aa702e53c35816c
@@ -2747,7 +2628,7 @@ SPEC CHECKSUMS:
   React: 6c36d83b2afecc1d45ec2a637158750edad20d87
   React-callinvoker: 89e3b00024ff7e18af33546d0501c780a1e6134a
   React-Core: fcb571da2212fb56f6aacff5a8ee039e7549e390
-  React-Core-prebuilt: 3fd0cfe528e653c412d5da457d13c3db50da4e7e
+  React-Core-prebuilt: ddd34d4ae250505d301442995d9096f93305d004
   React-CoreModules: d0f70df16a6d565b9618a1592225da69bfd00921
   React-cxxreact: fc8e33bf2952abd14fbc5ac1e442cd7dd60c2956
   React-debug: 6a58e62cd3c4983ad330628023bfaf4fd0198f28
@@ -2810,10 +2691,8 @@ SPEC CHECKSUMS:
   ReactAppDependencyProvider: 87593e9dfdba8dac1d7b2af1af05f0eff2a05684
   ReactCodegen: b4aa50d6970a6ff1d8f36272a575b14ce5dea133
   ReactCommon: 2564a7f26237121a5d769b8b5b4d7d8af16ddad2
-  ReactNativeDependencies: ab90825bb0dffa612fc6a23acd3013ff1411d1b0
-  RNAudioAPI: ddc5d7ba30eba1f37d6f1dfa510b650086fb6940
+  ReactNativeDependencies: 70f210d8dccc89991bf017f665b5d097a1b432dd
   RNGestureHandler: 70c66b3f20c21877cd0cd3fa6272a0ec4db58af8
-  RNPermissions: 8324558cf36b3a6c28e0e24c0462df3e37b2dbb0
   RNReanimated: 2ac49f7d747eb2de512707b0f28e8190c1f61686
   RNScreens: 6dc191b37f954780463ebbf3303574e6b30386a4
   RNWorklets: df0d5e3cdf41e1c874974fc6bed8c91dd0c24d3b
@@ -2821,8 +2700,9 @@ SPEC CHECKSUMS:
   SDWebImageAVIFCoder: afe194a084e851f70228e4be35ef651df0fc5c57
   SDWebImageSVGCoder: 15a300a97ec1c8ac958f009c02220ac0402e936c
   SDWebImageWebPCoder: e38c0a70396191361d60c092933e22c20d5b1380
+  TellusAudioSdk: 1afb70c2147c034b757b1d6fda4ef3bafcfb8d72
   Yoga: 7ca324e377340c274423a58a5494b08c2927f470
 
-PODFILE CHECKSUM: 4fdc5ef961fd0350b5f60d332a313a4602d6a3b7
+PODFILE CHECKSUM: 6fef0c4c6b3284a039cacea8e5821fe783eafc63
 
 COCOAPODS: 1.16.2

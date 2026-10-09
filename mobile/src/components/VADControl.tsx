@@ -31,7 +31,7 @@ export function VADToggle({
 export function VADStatus({ snapshot }: { snapshot: VadSnapshot }) {
   return (
     <Text style={styles.status}>
-      VAD: {snapshot.mode} · {snapshot.ready ? 'ready' : 'not ready'} · gate {snapshot.gate} · {snapshot.level}
+      VAD: {snapshot.mode} · {snapshot.ready ? 'ready' : 'not ready'} · gate {snapshot.gate}
     </Text>
   );
 }

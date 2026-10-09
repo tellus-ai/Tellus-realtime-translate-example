@@ -8,23 +8,14 @@
     "userInterfaceStyle": "automatic",
     "plugins": [
       "expo-router",
-      [
-        "react-native-permissions",
-        {
-          "iosPermissions": ["Microphone"]
-        }
-      ]
+      "@tellus-ai/audio-sdk"
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.tellus.realtimetranslationexample",
-      "infoPlist": {
-        "NSMicrophoneUsageDescription": "Microphone access is required for realtime translation."
-      }
+      "bundleIdentifier": "com.tellus.realtimetranslationexample"
     },
     "android": {
-      "package": "com.tellus.realtimetranslationexample",
-      "permissions": ["android.permission.RECORD_AUDIO"]
+      "package": "com.tellus.realtimetranslationexample"
     }
   }
 }
