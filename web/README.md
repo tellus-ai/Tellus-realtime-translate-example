@@ -9,8 +9,7 @@ Swagger snapshot of the REST and WebSocket contracts used by this example.
 
 ```bash
 cp .env.example .env
-npm install
-npm run prepare:engine
+npm run setup
 npm run dev
 ```
 
@@ -19,6 +18,8 @@ You can also use the development script.
 ```bash
 ./dev.sh
 ```
+
+`npm run setup` 전에 `.env`의 `TELLUS_AUDIO_ENGINE_TOKEN`에 Tellus에서 발급한 설치 토큰을 설정합니다. 설치 토큰은 실행 시 사용하는 OAuth `API_KEY`와 별개입니다. setup은 토큰을 먼저 검사하고 `npm ci`, SDK 설치기, `prepare:engine`을 순서대로 실행합니다. npm lifecycle 스크립트를 비활성화한 경우에도 SDK 설치기를 직접 실행하여 엔진과 모델 설치를 확인합니다. 다운로드 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정합니다. 설치 토큰에 `VITE_` 접두사를 붙이지 않습니다.
 
 SDK의 `vendor/web`에 엔진 `.mjs`·`.wasm`과 암호화 모델이 준비되어 있어야 합니다. `prepare:engine`은 SDK의 자산 복사 도구로 `public/tellus-audio/`를 생성하며 `dev`와 `build` 전에 자동 실행됩니다. 엔진 또는 SDK를 변경했으면 먼저 SDK를 다시 빌드합니다. 배포 서버의 모델 키 등록은 복사한 모델 manifest의 `keyId`와 일치해야 합니다.
 
@@ -108,9 +109,7 @@ SDK 연결점은 `src/audio/BrowserMicrophone.ts`, 자산 URL은 `src/config/bro
 ## Verification
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+npm run verify:pre-commit
 ```
 
 ## 실제 브라우저 엔진 검증

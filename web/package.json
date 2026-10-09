@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "predev": "npm run prepare:engine",
@@ -13,7 +14,8 @@
     "test:live": "node --env-file=.env scripts/live-smoke.mjs",
     "typecheck": "tsc -b --pretty false",
     "prepare:engine": "node scripts/prepare-engine-assets.mjs",
-    "test:engine-browser": "TMPDIR=/private/tmp node scripts/browser-engine-e2e.mjs"
+    "test:engine-browser": "TMPDIR=/private/tmp node scripts/browser-engine-e2e.mjs",
+    "verify:pre-commit": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@tellus-ai/audio-sdk-web": "file:../../tellus-audio-sdk/platforms/web",

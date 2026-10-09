@@ -4,11 +4,14 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "start": "expo start --dev-client",
     "ios": "expo run:ios",
     "android": "expo run:android",
     "test": "jest --runInBand --watchman=false",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test:setup": "node --test scripts/setup.test.mjs",
+    "verify:pre-commit": "npm run type-check && npm test && npm run test:setup"
   },
   "dependencies": {
     "@expo/env": "2.4.3",

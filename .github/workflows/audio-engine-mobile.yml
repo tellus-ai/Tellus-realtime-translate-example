@@ -123,8 +123,7 @@ jobs:
           npm audit --omit=dev --audit-level=high
           cd ../Tellus-realtime-translate-example/mobile
           npm ci --ignore-scripts --legacy-peer-deps
-          npm run type-check
-          npm test -- --no-watch
+          npm run verify:pre-commit
           cd ../web
           npm ci --ignore-scripts
       - name: Generate fresh Expo host with the SDK plugin

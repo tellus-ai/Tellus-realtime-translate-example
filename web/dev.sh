@@ -22,8 +22,8 @@ if ! awk -F= '
   exit 1
 fi
 
-if [[ ! -d node_modules ]]; then
-  npm install
+if [[ ! -d node_modules/@tellus-ai/audio-sdk-web/vendor/web ]] || ! npm ls @tellus-ai/audio-sdk-web --depth=0 >/dev/null 2>&1; then
+  npm run setup
 fi
 
 exec npm run dev -- "$@"
