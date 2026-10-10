@@ -10,7 +10,7 @@ npm run ios
 # 또는 npm run android
 ```
 
-`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 런타임 로그인용이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정한다.
+`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 런타임 로그인용이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정하며, 없으면 `REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, staging 기본 주소 순서로 선택한다.
 
 `./dev.sh [start|ios|android]`도 SDK 또는 엔진 파일이 없으면 같은 setup을 실행한다. setup 이후 `npm run ios` 또는 `npm run android`로 SDK가 포함된 개발 앱을 빌드한다.
 
@@ -34,7 +34,7 @@ npm run ios
 - background·interruption·route 변경: 자동 캡처 재개 없이 중단하며 새 승인이 필요한 연결은 재승인 후 재개
 - TTS: SDK `playback` 또는 `playbackEncoded`를 사용하면 OS 재생과 같은 PCM이 Rust AEC reference에 들어간다
 
-서버 URL은 `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_WS_URL`, `EXPO_PUBLIC_APP_ORIGIN`으로 설정한다. access token은 앱 bundle에 포함되므로 partner secret이나 모델 content key를 넣지 않는다.
+`npm start`, `npm run ios`, `npm run android`와 이를 실행하는 `./dev.sh start`, `./dev.sh ios`, `./dev.sh android`는 모두 `mobile/.env`를 읽는다. 서버 URL과 Origin은 `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, `APP_ORIGIN`으로 설정하며, 공통 `app.config.ts`가 Expo `extra`를 통해 앱에 전달한다. 기존 `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_WS_URL`, `EXPO_PUBLIC_APP_ORIGIN`도 지원하고, 두 형식이 함께 있으면 접두사가 없는 변수를 우선한다. `APP_ORIGIN`에는 서버에서 허용한 값을 지정해야 한다. 설정 변경 후 실행 중인 Metro를 종료하고 사용할 실행 명령을 다시 실행한다. access token은 앱 bundle에 포함되므로 partner secret이나 모델 content key를 넣지 않는다.
 
 ```sh
 npm run verify:pre-commit

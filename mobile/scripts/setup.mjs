@@ -6,7 +6,10 @@ import { parseEnv } from 'node:util';
 const root = new URL('../', import.meta.url);
 const envFile = new URL('.env', root);
 const env = { ...(existsSync(envFile) ? parseEnv(readFileSync(envFile, 'utf8')) : {}), ...process.env };
-const baseUrl = env.TELLUS_AUDIO_DOWNLOAD_BASE_URL || env.EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL || 'https://stgrtsapi.tellus.ai.kr';
+const baseUrl = env.TELLUS_AUDIO_DOWNLOAD_BASE_URL?.trim()
+  || env.REALTIME_SPEECH_HTTP_URL?.trim()
+  || env.EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL?.trim()
+  || 'https://stgrtsapi.tellus.ai.kr';
 const installationToken = env.TELLUS_AUDIO_ENGINE_TOKEN;
 
 try {

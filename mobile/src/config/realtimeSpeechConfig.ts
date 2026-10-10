@@ -1,20 +1,14 @@
 import Constants from 'expo-constants';
 
-function trimTrailingSlash(value: string): string {
-  return value.trim().replace(/\/+$/, '');
+function configuredUrl(value: unknown, fallback: string): string {
+  return (typeof value === 'string' && value.trim() ? value : fallback).trim().replace(/\/+$/, '');
 }
 
-const configuredAccessToken = Constants.expoConfig?.extra?.accessToken;
+const extra = Constants.expoConfig?.extra;
 
 export const realtimeSpeechConfig = {
-  accessToken: typeof configuredAccessToken === 'string' ? configuredAccessToken.trim() : '',
-  httpBaseUrl: trimTrailingSlash(
-    process.env.EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL || 'https://stgrtsapi.tellus.ai.kr',
-  ),
-  websocketBaseUrl: trimTrailingSlash(
-    process.env.EXPO_PUBLIC_REALTIME_SPEECH_WS_URL || 'wss://stgrtsapi.tellus.ai.kr',
-  ),
-  appOrigin: trimTrailingSlash(
-    process.env.EXPO_PUBLIC_APP_ORIGIN || 'https://devapp.tellus.ai.kr',
-  ),
+  accessToken: typeof extra?.accessToken === 'string' ? extra.accessToken.trim() : '',
+  httpBaseUrl: configuredUrl(extra?.httpBaseUrl, 'https://stgrtsapi.tellus.ai.kr'),
+  websocketBaseUrl: configuredUrl(extra?.websocketBaseUrl, 'wss://stgrtsapi.tellus.ai.kr'),
+  appOrigin: configuredUrl(extra?.appOrigin, 'https://devapp.tellus.ai.kr'),
 } as const;
