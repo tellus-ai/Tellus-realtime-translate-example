@@ -29,7 +29,7 @@ export interface TranslationRow {
 
 export type SessionPhase =
   | 'idle'
-  | 'preparing-vad'
+  | 'preparing-audio'
   | 'creating'
   | 'configuring'
   | 'connecting'
@@ -48,6 +48,7 @@ export interface SessionSnapshot {
   resultConnection: ConnectionStatus;
   audioConnection: ConnectionStatus;
   rows: TranslationRow[];
+  audioSdkReady: boolean;
   vad: ClientVadSnapshot;
   error: string | null;
 }

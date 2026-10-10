@@ -29,6 +29,7 @@ const server = {
 };
 
 class FakeCapture implements MicrophoneCapture {
+  audioSdkReady = true;
   vadEnabled: boolean | null = null;
   paused = false;
   stopped = false;
@@ -349,34 +350,27 @@ afterEach(() => {
 });
 
 describe('RealtimeTranslationSession with the audio engine', () => {
-  it('sends each gate transition before the frame it applies to, counting samples from the socket start', async () => {
+  it('requires SDK capture and disables client VAD even when requested', async () => {
     const { session, capture, audioSocket } = await startSession(true);
-
     capture.emit();
     capture.emit('speech_gate_opened');
     capture.emit();
     capture.emit('speech_gate_closed');
 
     expect(audioSocket.url).toBe('wss://example.test/audio?conversation_id=conversation-1&audio_format=opus');
-    expect(capture.vadEnabled).toBe(true);
+    expect(capture.vadEnabled).toBe(false);
     expect(server.settings).toEqual([
-      { languages: ['ko-KR', 'en-US'], transcription: { client_vad: true }, translation: {} },
+      { languages: ['ko-KR', 'en-US'], transcription: { client_vad: false }, translation: {} },
     ]);
-    const messages = audioSocket.sent;
-    expect(readStatus(messages[0])).toMatchObject({ status_seq: 1, boundary_sample: 0, mic: { state: 'capturing' } });
-    expect(messages[1]).toEqual(new Uint8Array([1]));
-    expect(readStatus(messages[2])).toMatchObject({ status_seq: 2, boundary_sample: 320, vad: { event: 'speech_gate_opened' } });
-    expect(messages[3]).toEqual(new Uint8Array([2]));
-    expect(messages[4]).toEqual(new Uint8Array([3]));
-    expect(readStatus(messages[5])).toMatchObject({ status_seq: 3, boundary_sample: 960, vad: { event: 'speech_gate_closed' } });
-    expect(messages[6]).toEqual(new Uint8Array([4]));
-    expect(session.getSnapshot().vad).toMatchObject({ enabled: true, ready: true, gate: 'closed' });
+    expect(readStatus(audioSocket.sent[0])).toMatchObject({ status_seq: 1, boundary_sample: 0, vad: { enabled: false } });
+    expect(audioSocket.sent.slice(1)).toEqual([1, 2, 3, 4].map((value) => new Uint8Array([value])));
+    expect(session.getSnapshot()).toMatchObject({ audioSdkReady: true, vad: { enabled: false, mode: 'disabled' } });
 
     await session.stop();
     expect(endRequests()).toHaveLength(1);
     expect(capture.stopped).toBe(true);
-    expect(readStatus(messages.at(-1))).toMatchObject({ mic: { state: 'idle' } });
-    expect(session.getSnapshot().phase).toBe('ended');
+    expect(readStatus(audioSocket.sent.at(-1))).toMatchObject({ mic: { state: 'idle' } });
+    expect(session.getSnapshot()).toMatchObject({ phase: 'ended', audioSdkReady: false });
   });
 
   it('turns the engine gate off for server VAD', async () => {
@@ -391,23 +385,22 @@ describe('RealtimeTranslationSession with the audio engine', () => {
     await session.stop();
   });
 
-  it('closes an open boundary before pausing and re-opens it when speech continues after resume', async () => {
+  it('keeps client VAD disabled while pausing and resuming', async () => {
     const { session, capture, audioSocket } = await startSession(true);
     capture.emit('speech_gate_opened');
     await session.pause();
 
     const messages = audioSocket.sent;
     expect(capture.paused).toBe(true);
-    expect(readStatus(messages[3])).toMatchObject({ boundary_sample: 320, mic: { state: 'capturing' }, vad: { event: 'speech_gate_closed' } });
-    expect(readStatus(messages[4])).toMatchObject({ boundary_sample: 320, mic: { state: 'paused' } });
-    expect(readStatus(messages[4]).vad).not.toHaveProperty('event');
+    expect(readStatus(messages[2])).toMatchObject({ boundary_sample: 320, mic: { state: 'paused' }, vad: { enabled: false } });
+    expect(session.getSnapshot().audioSdkReady).toBe(true);
 
     await session.resume();
-    capture.emit();
+    capture.emit('speech_gate_opened');
     expect(capture.paused).toBe(false);
-    expect(readStatus(messages[5])).toMatchObject({ mic: { state: 'capturing' } });
-    expect(readStatus(messages[6])).toMatchObject({ boundary_sample: 320, vad: { event: 'speech_gate_opened' } });
-    expect(messages[7]).toEqual(new Uint8Array([2]));
+    expect(readStatus(messages[3])).toMatchObject({ mic: { state: 'capturing' }, vad: { enabled: false } });
+    expect(messages[4]).toEqual(new Uint8Array([2]));
+    expect(messages).toHaveLength(5);
     await session.stop();
   });
 
@@ -424,7 +417,7 @@ describe('RealtimeTranslationSession with the audio engine', () => {
 
     capture.emit();
     const messages = reopened.sent;
-    expect(readStatus(messages[0])).toMatchObject({ status_seq: 3, boundary_sample: 0, mic: { state: 'capturing' } });
+    expect(readStatus(messages[0])).toMatchObject({ status_seq: 2, boundary_sample: 0, mic: { state: 'capturing' } });
     expect(messages[1]).toEqual(new Uint8Array([2]));
     await session.stop();
   });
@@ -946,10 +939,10 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(capture.capturing).toBe(true);
 
     capture.emit('speech_gate_opened');
-    // Status first, then the gate event of the restarted capture, both counted from sample 0 again.
-    const [status, gateOpened, frame] = reopened.sent;
+    // Status first, then audio counted from sample 0 again; client VAD stays disabled.
+    const [status, frame] = reopened.sent;
     expect(readStatus(status)).toMatchObject({ boundary_sample: 0, mic: { state: 'capturing' } });
-    expect(readStatus(gateOpened)).toMatchObject({ boundary_sample: 0, vad: { event: 'speech_gate_opened' } });
+    expect(readStatus(status).vad).toEqual({ enabled: false });
     expect(frame).toBeInstanceOf(Uint8Array);
     // status_seq keeps counting through the Conversation.
     expect(readStatus(status).status_seq).toBeGreaterThan(readStatus(audioSocket.sent[0]).status_seq);
@@ -1279,7 +1272,7 @@ describe('RealtimeTranslationSession while starting', () => {
 });
 
 describe('RealtimeTranslationSession stop', () => {
-  it('sends gate close and idle, waits for the last finals, closes /audio, ends, then closes Result', async () => {
+  it('sends idle, waits for the last finals, closes /audio, ends, then closes Result', async () => {
     server.sendsEnded = false;
     const { session, capture, resultSocket, audioSocket } = await startSession(true);
     capture.emit('speech_gate_opened');
@@ -1288,18 +1281,18 @@ describe('RealtimeTranslationSession stop', () => {
 
     const stopped = session.stop();
     await flush();
-    expect(timeline).toEqual(['audio.status capturing speech_gate_closed', 'audio.status idle']);
+    expect(timeline).toEqual(['audio.status idle']);
     expect(session.getSnapshot().phase).toBe('stopping');
 
     await vi.advanceTimersByTimeAsync(1_000);
     resultSocket.receive(result('transcript.final', 0, '안녕하세요.'));
     await flush();
     // The transcript is final, but its translation is still missing.
-    expect(timeline).toHaveLength(2);
+    expect(timeline).toHaveLength(1);
     expect(capture.authorized).toBe(true);
     resultSocket.receive(result('translation.final', 0, 'Hello.', 'en-US'));
     await flush();
-    expect(timeline.slice(2)).toEqual(['audio close', `POST ${END_PATH}`]);
+    expect(timeline.slice(1)).toEqual(['audio close', `POST ${END_PATH}`]);
     expect(audioSocket.detached).toBe(true);
     // Closing `/audio` disposes its authorization, which stops native capture.
     expect(capture.authorized).toBe(false);
@@ -1311,7 +1304,7 @@ describe('RealtimeTranslationSession stop', () => {
     resultSocket.receive(result('transcript.final', 1, '마지막 문장.'));
     resultSocket.receive({ type: 'conversation.ended', data: {} });
     await stopped;
-    expect(timeline.slice(4)).toEqual(['result close']);
+    expect(timeline.slice(3)).toEqual(['result close']);
     expect(session.getSnapshot()).toMatchObject({
       phase: 'ended',
       error: null,
@@ -1402,7 +1395,6 @@ describe('RealtimeTranslationSession stop', () => {
 
     await session.stop({ waitForResults: false });
     expect(timeline).toEqual([
-      'audio.status capturing speech_gate_closed',
       'audio.status idle',
       'audio close',
       `POST ${END_PATH}`,
@@ -1466,5 +1458,36 @@ describe('RealtimeTranslationSession stop', () => {
       phase: 'error',
       error: 'Interpretation worker revision conflict. (interpretation_settings_changed)',
     });
+  });
+});
+
+describe('Audio SDK requirement', () => {
+  it('rejects non-SDK capture before creating a conversation', async () => {
+    const { session, capture } = createSession();
+    capture.audioSdkReady = false;
+    expect(session.getSnapshot().audioSdkReady).toBe(false);
+    await session.start(input);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: 'Audio SDK is required. Non-SDK audio capture is not supported.' });
+    expect(server.requests).toEqual([]);
+    expect(FakeSocket.instances).toEqual([]);
+    expect(capture.stopped).toBe(true);
+  });
+});
+
+
+describe('disabled SDK configuration', () => {
+  it('fails before preparing capture or creating a conversation', async () => {
+    const createCapture = vi.fn(async () => new FakeCapture());
+    const session = new RealtimeTranslationSession(
+      { websocketBaseUrl: 'wss://example.test', audioSdkEnabled: false },
+      createRealtimeApi({ httpBaseUrl: HTTP_BASE_URL, accessToken: 'token' }, fakeFetch),
+      createCapture,
+      () => 'token',
+    );
+    await session.start(input);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: 'Audio SDK is required. Enable audio-sdk before starting a session.' });
+    expect(createCapture).not.toHaveBeenCalled();
+    expect(server.requests).toEqual([]);
+    expect(FakeSocket.instances).toEqual([]);
   });
 });

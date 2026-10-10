@@ -62,6 +62,7 @@ export interface SessionSnapshot {
   resultConnection: ConnectionStatus;
   audioConnection: ConnectionStatus;
   rows: TranslationRow[];
+  audioSdkReady: boolean;
   vad: ClientVadSnapshot;
   error: string | null;
 }

@@ -44,6 +44,7 @@ try {
     'import.meta.env.VITE_REALTIME_SPEECH_HTTP_URL': JSON.stringify(server.url),
     'import.meta.env.VITE_REALTIME_SPEECH_WS_URL': JSON.stringify(server.url.replace('http:', 'ws:')),
     'import.meta.env.VITE_TELLUS_DENOISE': JSON.stringify(String(streamModels)),
+    'import.meta.env.VITE_TELLUS_AUDIO_SDK_ENABLED': JSON.stringify('true'),
   }, build: { outDir: staticRoot, emptyOutDir: true } });
   browser = await chromium.launch({ headless: true, executablePath: process.env.TELLUS_CHROMIUM_PATH, args: [
     '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
@@ -146,10 +147,23 @@ try {
     console.log(JSON.stringify({ sdk: 'passed', sampleRate, checks: probe.checks, chunks: probe.chunks.length, queueLatencyP95Ms: percentile(probe.queueLatencies.toSorted((a, b) => a - b), 0.95), queueLatencyP99Ms: percentile(probe.queueLatencies.toSorted((a, b) => a - b), 0.99), gaps: probe.chunks.filter((chunk) => chunk.gap).length, queueLostProcessingSamples: probe.queueLosses.reduce((a, b) => a + b, 0), rawPushRoundtripP95Ms: percentile(sorted, 0.95), rawPushRoundtripP99Ms: percentile(sorted, 0.99), callbackLagP99Ms: percentile(probe.chunks.map((chunk) => chunk.lag).toSorted((a, b) => a - b), 0.99), partialTails: probe.chunks.filter((chunk) => chunk.valid < chunk.count).length }));
 
   }
+  const appStatusStart = server.stats.statuses.length;
   await page.goto(server.url);
-  if (!streamModels) await page.getByRole('checkbox').uncheck();
+  await page.getByText('Audio SDK: 사용 중', { exact: true }).waitFor();
+  await page.getByText('Client VAD: Disabled (audio-sdk)', { exact: true }).waitFor();
+  const vadToggle = page.getByRole('checkbox', { name: 'Voice Activity Detection', exact: true });
+  assert.ok(await vadToggle.isDisabled());
+  assert.equal(await vadToggle.isChecked(), false);
+  await page.locator('.vad-option').click({ force: true });
+  assert.equal(await vadToggle.isChecked(), false);
+  await page.screenshot({ path: resolve(temporary, 'sdk-enabled-idle.png') });
   await page.getByRole('button', { name: 'Start', exact: true }).click();
   await page.getByText('Status: recording', { exact: true }).waitFor({ timeout: 20000 });
+  await page.getByText('Audio SDK: 사용 중', { exact: true }).waitFor();
+  assert.ok(await vadToggle.isDisabled());
+  assert.equal(await vadToggle.isChecked(), false);
+  await page.locator('.vad-option').click({ force: true });
+  assert.equal(await vadToggle.isChecked(), false);
   const until = Date.now() + 5000;
   const initial = server.stats.frames;
   while (server.stats.frames < initial + 10 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -157,6 +171,9 @@ try {
   await page.getByText('실제 엔진 통합 테스트', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
   await page.getByText('Status: paused', { exact: true }).waitFor();
+  await page.getByText('Audio SDK: 사용 중', { exact: true }).waitFor();
+  assert.ok(await vadToggle.isDisabled());
+  assert.equal(await vadToggle.isChecked(), false);
   const paused = server.stats.frames;
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(server.stats.frames, paused);
@@ -169,6 +186,9 @@ try {
   assert.ok(server.stats.authentications > beforeReconnect);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   await page.getByText('Status: ended', { exact: true }).waitFor({ timeout: 10000 });
+  await page.getByText('Audio SDK: 사용 중', { exact: true }).waitFor();
+  assert.ok(await vadToggle.isDisabled());
+  assert.equal(await vadToggle.isChecked(), false);
   const stopped = server.stats.frames;
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(server.stats.frames, stopped);
@@ -176,6 +196,9 @@ try {
   await page.getByText('Status: recording', { exact: true }).waitFor({ timeout: 20000 });
   server.denyRenewal();
   await page.getByText('Status: error', { exact: true }).waitFor({ timeout: 5000 });
+  await page.getByText('Audio SDK: 사용 중', { exact: true }).waitFor();
+  assert.ok(await vadToggle.isDisabled());
+  assert.equal(await vadToggle.isChecked(), false);
   const invalidated = server.stats.frames;
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(server.stats.frames, invalidated);
@@ -183,7 +206,29 @@ try {
   assert.equal(server.stats.preAuthorizationFrames, 0);
   assert.equal(await page.evaluate(() => window.audioSendsAfterDenial), 0);
   assert.ok(server.stats.renewals > 0);
+  const appStatuses = server.stats.statuses.slice(appStatusStart);
+  assert.ok(appStatuses.length > 0);
+  assert.ok(appStatuses.every((status) => status.vad.enabled === false && !status.vad.event));
   assert.equal(server.stats.errors.length, 0);
+  assert.deepEqual(errors, []);
+  await build({ root, mode: 'engine-integration', define: {
+    'import.meta.env.VITE_ACCESS_TOKEN': JSON.stringify('test-access-token'),
+    'import.meta.env.VITE_REALTIME_SPEECH_HTTP_URL': JSON.stringify(server.url),
+    'import.meta.env.VITE_REALTIME_SPEECH_WS_URL': JSON.stringify(server.url.replace('http:', 'ws:')),
+    'import.meta.env.VITE_TELLUS_AUDIO_SDK_ENABLED': JSON.stringify('false'),
+  }, build: { outDir: staticRoot, emptyOutDir: true } });
+  await page.goto(server.url);
+  await page.getByText('Audio SDK: 사용하지 않음', { exact: true }).waitFor();
+  assert.ok(await vadToggle.isEnabled());
+  await vadToggle.check();
+  assert.ok(await vadToggle.isChecked());
+  const authenticationsBeforeDisabledStart = server.stats.authentications;
+  await page.getByRole('button', { name: 'Start', exact: true }).click();
+  await page.getByText('Status: error', { exact: true }).waitFor();
+  await page.getByText('Audio SDK is required. Enable audio-sdk before starting a session.', { exact: true }).waitFor();
+  assert.equal(server.stats.authentications, authenticationsBeforeDisabledStart);
+  assert.ok(await vadToggle.isEnabled());
+  assert.ok(await vadToggle.isChecked());
   assert.deepEqual(errors, []);
   writeFileSync(resolve(temporary, 'app-server-stats.json'), JSON.stringify(server.stats, null, 2));
   console.log(JSON.stringify({ app: 'passed', streamModels, authentications: server.stats.authentications, renewals: server.stats.renewals, modelKeyRequests: server.stats.keyRequests, packets: server.stats.frames, beforePermitPackets: server.stats.preAuthorizationFrames, inFlightPacketsAfterServerDenial: server.stats.afterDenialFrames, endings: server.stats.endings, errors, warnings, artifacts: temporary }));

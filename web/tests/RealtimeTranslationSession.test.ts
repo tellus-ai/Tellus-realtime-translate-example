@@ -31,6 +31,8 @@ function gate(): { opened: Promise<void>; open: () => void } {
 }
 
 class FakeMicrophone implements MicrophoneRecorder {
+  audioSdkReady = true;
+  prepareError: Error | null = null;
   capturing = false;
   startError: Error | null = null;
   resumeError: Error | null = null;
@@ -42,7 +44,7 @@ class FakeMicrophone implements MicrophoneRecorder {
   private sample = 0;
   private onFrame: ((frame: AudioChunk) => void) | null = null;
 
-  async prepare(clientVad: boolean): Promise<void> { this.clientVad = clientVad; }
+  async prepare(clientVad: boolean): Promise<void> { if (this.prepareError) throw this.prepareError; this.clientVad = clientVad; }
 
   async authorize(socket: WebSocket): Promise<void> {
     if (socket.readyState !== WebSocket.OPEN) {
@@ -462,13 +464,10 @@ describe('RealtimeTranslationSession reconnects', () => {
 
     microphone.emit();
     await flush();
-    // Status first, then the gate event of the reset VAD, both counted from sample 0 again.
-    const [status, gateOpened, frame] = reopened.sent;
+    // Status first, then audio counted from sample 0 again; client VAD stays disabled.
+    const [status, frame] = reopened.sent;
     expect(JSON.parse(status as string)).toMatchObject({ boundary_sample: 0, mic: { state: 'capturing' } });
-    expect(JSON.parse(gateOpened as string)).toMatchObject({
-      boundary_sample: 0,
-      vad: { event: 'speech_gate_opened' },
-    });
+    expect(JSON.parse(status as string).vad).toEqual({ enabled: false });
     expect(frame).toBeInstanceOf(ArrayBuffer);
     // status_seq keeps counting through the Conversation.
     expect(JSON.parse(status as string).status_seq).toBeGreaterThan(
@@ -891,7 +890,7 @@ describe('RealtimeTranslationSession while starting', () => {
 });
 
 describe('RealtimeTranslationSession stop', () => {
-  it('sends gate close and idle, waits for the last finals, closes /audio, ends, then closes Result', async () => {
+  it('sends idle, waits for the last finals, closes /audio, ends, then closes Result', async () => {
     server.sendsEnded = false;
     const { session, microphone, resultSocket, audioSocket } = await startSession(true);
     microphone.emit();
@@ -901,17 +900,17 @@ describe('RealtimeTranslationSession stop', () => {
 
     const stopped = session.stop();
     await flush();
-    expect(timeline).toEqual(['audio.status capturing speech_gate_closed', 'audio.status idle']);
+    expect(timeline).toEqual(['audio.status idle']);
     expect(session.getSnapshot().phase).toBe('stopping');
 
     await vi.advanceTimersByTimeAsync(1_000);
     resultSocket.receive(result('transcript.final', 0, '안녕하세요.'));
     await flush();
     // The transcript is final, but its translation is still missing.
-    expect(timeline).toHaveLength(2);
+    expect(timeline).toHaveLength(1);
     resultSocket.receive(result('translation.final', 0, 'Hello.', 'en-US'));
     await flush();
-    expect(timeline.slice(2)).toEqual(['audio close', `POST ${END_PATH}`]);
+    expect(timeline.slice(1)).toEqual(['audio close', `POST ${END_PATH}`]);
     expect(audioSocket.detached).toBe(true);
     expect(resultSocket.readyState).toBe(FakeSocket.OPEN);
     expect(session.getSnapshot().phase).toBe('stopping');
@@ -920,7 +919,7 @@ describe('RealtimeTranslationSession stop', () => {
     resultSocket.receive(result('transcript.final', 1, '마지막 문장.'));
     resultSocket.receive({ type: 'conversation.ended', data: {} });
     await stopped;
-    expect(timeline.slice(4)).toEqual(['result close']);
+    expect(timeline.slice(3)).toEqual(['result close']);
     expect(session.getSnapshot()).toMatchObject({
       phase: 'ended',
       error: null,
@@ -1019,5 +1018,57 @@ describe('RealtimeTranslationSession stop', () => {
       resultConnection: 'closed',
     });
     expect(resultSocket.readyState).toBe(FakeSocket.CLOSED);
+  });
+});
+
+describe('Audio SDK requirement', () => {
+  it('reports SDK usage only after preparation and clears it on stop', async () => {
+    const { session, microphone } = createSession();
+    const prepare = vi.spyOn(microphone, 'prepare');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    expect(session.getSnapshot().audioSdkReady).toBe(false);
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
+    expect(prepare).toHaveBeenCalledWith(false);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioSdkReady: true, vad: { enabled: false, mode: 'disabled' } });
+    const settingsCall = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/interpretation-settings'));
+    expect(JSON.parse(String(settingsCall?.[1]?.body)).transcription.client_vad).toBe(false);
+    await session.stop();
+    expect(session.getSnapshot().audioSdkReady).toBe(false);
+  });
+
+  it('rejects non-SDK capture before creating a conversation', async () => {
+    const { session, microphone } = createSession();
+    microphone.audioSdkReady = false;
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: 'Audio SDK is required. Non-SDK audio capture is not supported.' });
+    expect(server.requests).toEqual([]);
+    expect(FakeSocket.instances).toEqual([]);
+    expect(microphone.capturing).toBe(false);
+  });
+
+  it('reports failed SDK initialization without opening sockets', async () => {
+    const { session, microphone } = createSession();
+    microphone.prepareError = new Error('Audio SDK is required but could not be initialized: missing engine');
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: microphone.prepareError.message });
+    expect(server.requests).toEqual([]);
+    expect(FakeSocket.instances).toEqual([]);
+  });
+});
+
+
+describe('disabled SDK configuration', () => {
+  it('fails before preparing capture or creating a conversation', async () => {
+    const microphone = new FakeMicrophone();
+    const prepare = vi.spyOn(microphone, 'prepare');
+    const session = new RealtimeTranslationSession({ ...endpoints, audioSdkEnabled: false }, microphone, 'token');
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: 'Audio SDK is required. Enable audio-sdk before starting a session.' });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(server.requests).toEqual([]);
+    expect(FakeSocket.instances).toEqual([]);
   });
 });

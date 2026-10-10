@@ -1,37 +1,35 @@
 import { StyleSheet, Switch, Text, View } from 'react-native';
 import type { VadSnapshot } from '../audio/VADTypes';
 
-export function VADToggle({
-  enabled,
-  disabled,
-  onChange,
-}: {
+export function VADToggle({ enabled, disabled, audioSdkEnabled, onChange }: {
   enabled: boolean;
   disabled: boolean;
+  audioSdkEnabled: boolean;
   onChange: (enabled: boolean) => void;
 }) {
+  const locked = disabled || audioSdkEnabled;
   return (
-    <View style={[styles.option, disabled && styles.disabled]}>
+    <View style={[styles.option, locked && styles.disabled]}>
       <View style={styles.copy}>
         <Text style={styles.label}>Voice Activity Detection</Text>
         <Text style={styles.description}>
-          {enabled ? 'Use Silero client VAD' : 'Use server VAD'}
+          {audioSdkEnabled ? 'Disabled while using audio-sdk' : enabled ? 'Use Silero client VAD' : 'Use server VAD'}
         </Text>
       </View>
       <Switch
         accessibilityLabel="Voice Activity Detection"
-        disabled={disabled}
-        onValueChange={onChange}
-        value={enabled}
+        disabled={locked}
+        value={enabled && !audioSdkEnabled}
+        onValueChange={(value) => { if (!locked) onChange(value); }}
       />
     </View>
   );
 }
 
-export function VADStatus({ snapshot }: { snapshot: VadSnapshot }) {
+export function VADStatus({ snapshot, audioSdkEnabled }: { snapshot: VadSnapshot; audioSdkEnabled: boolean }) {
   return (
     <Text style={styles.status}>
-      VAD: {snapshot.mode} · {snapshot.ready ? 'ready' : 'not ready'} · gate {snapshot.gate}
+      Client VAD: {snapshot.enabled && !audioSdkEnabled ? snapshot.mode : audioSdkEnabled ? 'Disabled (audio-sdk)' : 'Disabled'}
     </Text>
   );
 }

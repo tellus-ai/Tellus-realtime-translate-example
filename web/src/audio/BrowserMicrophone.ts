@@ -1,8 +1,9 @@
-import { AudioEngine, type AudioCapture, type AudioChunk } from '@tellus-ai/audio-sdk-web';
+import type { AudioEngine, AudioCapture, AudioChunk } from '@tellus-ai/audio-sdk-web';
 import { attachEngineAuthorization, type EngineAuthorizationController } from '@tellus-ai/audio-sdk-web/authorization';
 import { browserEngineAssets } from '../config/browserEngineAssets';
 
 export interface MicrophoneRecorder {
+  readonly audioSdkReady: boolean;
   prepare(clientVad: boolean): Promise<void>;
   authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void>;
   releaseAuthorization(): void;
@@ -18,16 +19,30 @@ export class BrowserMicrophone implements MicrophoneRecorder {
   private capture?: AudioCapture;
   private authorization?: EngineAuthorizationController;
   private callback?: Parameters<AudioCapture['start']>[0];
+  private generation = 0;
 
-  async prepare(clientVad: boolean): Promise<void> {
+  get audioSdkReady(): boolean { return Boolean(this.capture); }
+
+  async prepare(_clientVad: boolean): Promise<void> {
     await this.stop();
-    this.engine = await AudioEngine.init({
-      micEnabled: true, processing: { sampleRate: 16000, chunkDurationMs: 20 },
-      transport: { codec: 'opus', bitrateBps: 64000 },
-      vadEnabled: clientVad, denoiseEnabled: import.meta.env.VITE_TELLUS_DENOISE === 'true',
-      echoCancellationEnabled: true, micAgc2Enabled: false,
-    }, browserEngineAssets(clientVad));
-    this.capture = this.engine.createCapture();
+    const generation = ++this.generation;
+    try {
+      const { AudioEngine } = await import('@tellus-ai/audio-sdk-web');
+      const engine = await AudioEngine.init({
+        micEnabled: true, processing: { sampleRate: 16000, chunkDurationMs: 20 },
+        transport: { codec: 'opus', bitrateBps: 64000 },
+        vadEnabled: false, denoiseEnabled: import.meta.env.VITE_TELLUS_DENOISE === 'true',
+        echoCancellationEnabled: true, micAgc2Enabled: false,
+      }, browserEngineAssets(false));
+      if (generation !== this.generation) {
+        await engine.dispose();
+        return;
+      }
+      this.engine = engine;
+      this.capture = engine.createCapture();
+    } catch (error) {
+      throw new Error(`Audio SDK is required but could not be initialized: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void> {
@@ -62,13 +77,16 @@ export class BrowserMicrophone implements MicrophoneRecorder {
   }
 
   async stop(): Promise<void> {
-    try { await this.capture?.stop(); }
+    ++this.generation;
+    const capture = this.capture;
+    const engine = this.engine;
+    this.capture = undefined;
+    this.engine = undefined;
+    this.callback = undefined;
+    try { await capture?.stop(); }
     finally {
       this.releaseAuthorization();
-      await this.engine?.dispose();
-      this.capture = undefined;
-      this.engine = undefined;
-      this.callback = undefined;
+      await engine?.dispose();
     }
   }
 }

@@ -36,9 +36,14 @@ Set an OAuth access token in `API_KEY` in `.env`, select two different languages
 The token cannot be entered or changed in the browser UI. Restart the development server after changing
 environment variables.
 
-You can select the voice activity detection method before starting. The default is **Use Silero client VAD**,
-and it cannot be changed while a session is active. Turning the toggle off selects **Use server VAD**. In this
-mode, the browser does not load the Silero model and saves `client_vad: false`.
+The UI shows **Audio SDK: 사용 중 / 사용하지 않음** from the configured audio processing mode, independently of capture readiness. Start requires a
+successfully initialized audio-sdk capture; missing or failed SDK initialization is a session error before
+a Conversation is created. Client VAD is disabled in both the SDK and interpretation settings
+(`vadEnabled: false`, `client_vad: false`), and the browser does not load the Silero model. SDK mode is enabled
+by default, so the VAD toggle is OFF and disabled before Start and after Stop or a session error. Set
+`VITE_TELLUS_AUDIO_SDK_ENABLED=false` in `.env` to disable SDK mode and allow VAD selection.
+SDK-disabled sessions still fail to start. `audioSdkReady` tracks capture readiness separately and never
+unlocks the VAD toggle.
 
 ## 엔진과 환경
 
@@ -77,7 +82,7 @@ The session follows
 | Any other close code, including `1006`, `1011`, and `1013` | Reopens the socket after 1, 2, 5, 10, then every 30 seconds, or after `retry_after_ms` when that is longer. A socket that closes while a reconnect is already waiting is reopened by that reconnect. |
 | A socket closes, or is not usable within 10 seconds, while starting (until both sockets are open and the microphone has started, that is, before the status is `recording`) | The start fails. Nothing is reconnected. |
 | Only the Result WebSocket closed | Recording and `/audio` continue. Only Result is reopened. |
-| `/audio` closed | Pauses the microphone and shows `reconnecting`. On the new socket a fresh native permit is required before capture resumes, and the wire sample cursor restarts at 0. The example sends an `audio.status` when authorization completes, which the server may ignore because no audio has arrived yet; VAD gate events follow with the audio frames. A session that was paused stays paused. |
+| `/audio` closed | Pauses the microphone and shows `reconnecting`. On the new socket a fresh native permit is required before capture resumes, and the wire sample cursor restarts at 0. The example sends an `audio.status` when authorization completes, which the server may ignore because no audio has arrived yet; Client VAD stays disabled while audio frames continue. A session that was paused stays paused. |
 | Both sockets closed | Opens Result first and `/audio` after `participants.snapshot`. |
 | A reconnect attempt is not usable within 10 seconds, or closes again | Moves to the next backoff step. The steps start over after both sockets stayed open for 30 seconds. |
 | Browser `online` event | A reconnect that is waiting runs at once. `offline` is ignored. |

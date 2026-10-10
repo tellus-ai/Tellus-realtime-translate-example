@@ -62,8 +62,8 @@ npm run dist   # installers for the current platform
 not configured. The engine's native addon, ONNX Runtime library, and models are unpacked from `app.asar`
 (`asarUnpack`) because native code cannot read files inside the archive.
 
-The build writes `dist/runtime.env` with only `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, and
-`API_KEY`, and the packaged app reads that file. `TELLUS_AUDIO_ENGINE_TOKEN` is never bundled. `API_KEY` is,
+The build writes `dist/runtime.env` with only `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, `API_KEY`, and
+`TELLUS_AUDIO_SDK_ENABLED`, and the packaged app reads that file. `TELLUS_AUDIO_ENGINE_TOKEN` is never bundled. `API_KEY` is,
 so anyone with the app can extract it, the same way the web build exposes the token in its bundle. Use a
 short-lived, restricted access token and do not distribute builds that contain your own token.
 
@@ -74,11 +74,12 @@ The main process owns the whole session; the renderer only draws it.
 | Process | Responsibility |
 | --- | --- |
 | Main | Audio engine capture, REST calls with `API_KEY`, Result and Audio WebSockets (`ws`), reconnects, transcript state |
-| Renderer | Language and VAD selection, Start/Pause/Resume/Stop, rendering the session snapshot pushed over IPC |
+| Renderer | Language and VAD selection, Audio SDK status, Start/Pause/Resume/Stop, rendering the session snapshot pushed over IPC |
 
-- **Audio engine.** `AudioEngine.init()` runs at app start and preloads the Silero model. Each session
-  creates a capture with 16 kHz, 20 ms Opus frames at 64 kbps and turns the engine VAD gate on or off with
-  `setVadEnabled()`. Denoise is off, matching the Tellus desktop app default.
+- **Audio SDK.** `AudioEngine.init()` runs at app start with client VAD disabled. Each session requires
+  SDK capture with 16 kHz, 20 ms Opus frames at 64 kbps. The UI shows **Audio SDK: 사용 중 / 사용하지 않음**
+  from the configured audio processing mode, independently of capture readiness. Missing or failed SDK initialization is a session error before a
+  Conversation is created. Denoise is off, matching the Tellus desktop app default.
 - **Execution authorization.** Before capture starts, `attachEngineAuthorization()` sends
   `audio.authenticate` on the Audio WebSocket and waits for the native engine to accept the signed
   permit. It sends `engine.renew` at most eight minutes apart, including while paused. Closing the
@@ -89,10 +90,13 @@ The main process owns the whole session; the renderer only draws it.
 - **Login credentials.** Each REST call and engine authorization request rereads `API_KEY` from the
   environment/runtime file. Engine permit renewal does not refresh the login JWT itself. Supply a valid
   login token; a production integration should obtain refreshed credentials from its login service.
-- **VAD boundaries.** The engine marks gate transitions on audio chunks (`gateEvent`). The session sends the
-  matching `audio.status` event before the frame it applies to, with `boundary_sample` counted from the start
-  of the current Audio WebSocket. A boundary that is open when the session pauses or stops is closed first,
-  and speech that is still in progress after a resume or reconnect re-opens it.
+- **Client VAD.** The SDK gate stays off (`vadEnabled: false`, `setVadEnabled(false)`) and interpretation
+  settings always use `client_vad: false`, even if a caller requests client VAD. Pause, resume, and
+  reconnect preserve this setting; `audio.status` reports `vad.enabled: false` without gate events.
+  SDK mode is enabled by default, so the VAD toggle is OFF and disabled from app launch, including after
+  Stop or a session error. Set `TELLUS_AUDIO_SDK_ENABLED=false` in `.env` to disable SDK mode and allow
+  VAD selection. SDK-disabled sessions still fail to start. `audioSdkReady` tracks capture readiness
+  separately and never unlocks the VAD toggle.
 - **No Origin header.** WebSockets and REST requests come from the main process, like other native
   clients, so the renderer origin (`tellus-translate://app`) never reaches the server and does not need to
   be on its allowlist. The WebSockets are opened with the `ws` package, which sends no Origin header
@@ -118,7 +122,7 @@ The session follows
 | Any other close code, including `1006`, `1011`, and `1013` | Reopens the socket after 1, 2, 5, 10, then every 30 seconds, or after `retry_after_ms` when that is longer. A socket that closes while a reconnect is already waiting is reopened by that reconnect. |
 | A socket closes, or is not usable in time, while starting (until both sockets are open and the engine is authorized, that is, before the status is `recording`) | The start fails. Nothing is reconnected. Result has 10 seconds to send `participants.snapshot`. `/audio` has 10 seconds to open, and the engine authorization then has its own 10 seconds. |
 | Only the Result WebSocket closed | Capture, the engine authorization, and `/audio` continue. Only Result is reopened. |
-| `/audio` closed | Disposes the engine authorization, which stops native capture, and shows `reconnecting`. The new socket is authorized first; then capture starts again and the sample cursor restarts at 0. The example sends an `audio.status` when the socket is authorized, which the server may ignore because no audio has arrived yet; VAD gate events follow with the audio frames. A session that was paused stays paused. |
+| `/audio` closed | Disposes the engine authorization, which stops native capture, and shows `reconnecting`. The new socket is authorized first; then capture starts again and the sample cursor restarts at 0. The example sends an `audio.status` when the socket is authorized, which the server may ignore because no audio has arrived yet; Client VAD stays disabled while audio frames continue. A session that was paused stays paused. |
 | Both sockets closed | Opens Result first and `/audio` after `participants.snapshot`. |
 | A reconnect attempt is not usable in time, or closes again | Moves to the next backoff step. The steps start over after both sockets stayed open for 30 seconds. |
 | Result reconnected | Shows the results that arrive from then on. Results sent while the Result WebSocket was closed are not recovered. |

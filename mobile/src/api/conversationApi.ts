@@ -1,6 +1,7 @@
 import { RealtimeApiError, requestJson } from './httpClient';
 
 export interface RealtimeEndpoints {
+  audioSdkEnabled?: boolean;
   httpBaseUrl: string;
   websocketBaseUrl: string;
   appOrigin: string;

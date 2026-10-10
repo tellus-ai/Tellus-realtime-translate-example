@@ -46,6 +46,7 @@ export class RealtimeTranslationSession {
     resultConnection: 'closed',
     audioConnection: 'closed',
     rows: [],
+    audioSdkReady: false,
     vad: disabledVadSnapshot(false),
     error: null,
   };
@@ -103,19 +104,22 @@ export class RealtimeTranslationSession {
     this.desiredPaused = false;
     this.acceptingAudio = false;
     this.update({
-      phase: input.clientVad ? 'preparing-vad' : 'creating',
+      phase: 'preparing-audio',
       rows: [],
       error: null,
       conversationId: null,
-      vad: input.clientVad ? sileroVadSnapshot(false) : disabledVadSnapshot(true),
+      audioSdkReady: false,
+      vad: disabledVadSnapshot(true),
     });
     window.addEventListener('online', this.handleOnline);
     window.addEventListener('visibilitychange', this.handleVisibilityChange);
 
     try {
-      await this.microphone.prepare(input.clientVad);
+      if (this.endpoints.audioSdkEnabled === false) throw new Error('Audio SDK is required. Enable audio-sdk before starting a session.');
+      await this.microphone.prepare(false);
       if (generation !== this.generation) return;
-      this.update({ phase: 'creating', vad: input.clientVad ? sileroVadSnapshot(false) : disabledVadSnapshot(true) });
+      if (!this.microphone.audioSdkReady) throw new Error('Audio SDK is required. Non-SDK audio capture is not supported.');
+      this.update({ phase: 'creating', audioSdkReady: true });
 
       const conversationId = await createConversation(this.endpoints, this.accessToken);
       if (generation !== this.generation) {
@@ -129,7 +133,7 @@ export class RealtimeTranslationSession {
         conversationId,
         input.sourceLanguage,
         input.targetLanguage,
-        input.clientVad,
+        false,
       );
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
@@ -138,7 +142,7 @@ export class RealtimeTranslationSession {
       if (!await this.openSocket('result', conversationId) || generation !== this.generation) return;
       if (!await this.openSocket('audio', conversationId) || generation !== this.generation) return;
 
-      this.update({ vad: input.clientVad ? sileroVadSnapshot(true) : disabledVadSnapshot(true) });
+      this.update({ vad: disabledVadSnapshot(true) });
       const framesBeforeMicrophoneReady: AudioChunk[] = [];
       let microphoneReady = false;
       await this.microphone.start((frame) => {
@@ -238,7 +242,7 @@ export class RealtimeTranslationSession {
     const stoppedVad = this.snapshot.vad.enabled ? sileroVadSnapshot(true) : this.snapshot.vad;
     if (event) this.sendAudioStatus('capturing', stoppedVad, event);
     this.sendAudioStatus('idle', stoppedVad);
-    this.update({ phase: 'stopping', vad: stoppedVad });
+    this.update({ phase: 'stopping', audioSdkReady: false, vad: stoppedVad });
     const conversationId = this.snapshot.conversationId;
     ++this.generation;
 
@@ -564,7 +568,7 @@ export class RealtimeTranslationSession {
     this.closeSocket('audio');
     if (!keepResultSocket) this.closeSocket('result');
     await this.microphone.stop().catch(() => {});
-
+    this.update({ audioSdkReady: false });
   }
 
   /** The server reported the end of the Conversation, so there is nothing left for `POST /end`. */

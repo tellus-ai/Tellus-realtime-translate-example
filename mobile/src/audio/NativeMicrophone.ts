@@ -1,7 +1,8 @@
-import { AudioEngine, type AudioCapture, type AudioChunk } from '@tellus-ai/audio-sdk-mobile';
+import type { AudioCapture, AudioChunk } from '@tellus-ai/audio-sdk-mobile';
 import { attachEngineAuthorization, type EngineAuthorizationController } from '@tellus-ai/audio-sdk-mobile/authorization';
 
 export interface MicrophoneRecorder {
+  readonly audioSdkReady: boolean;
   prepare(clientVad: boolean): Promise<void>;
   authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void>;
   releaseAuthorization(): void;
@@ -18,16 +19,24 @@ export class NativeMicrophone implements MicrophoneRecorder {
   private callback?: Parameters<AudioCapture['start']>[0];
   private generation = 0;
 
-  async prepare(clientVad: boolean): Promise<void> {
+  get audioSdkReady(): boolean { return Boolean(this.capture); }
+
+  async prepare(_clientVad: boolean): Promise<void> {
     await this.stop();
     const generation = ++this.generation;
-    const engine = await AudioEngine.init({
-      micEnabled: true, processing: { sampleRate: 16000, chunkDurationMs: 20 },
-      transport: { codec: 'opus', bitrateBps: 64000 },
-      denoiseEnabled: process.env.EXPO_PUBLIC_TELLUS_DENOISE !== 'false', vadEnabled: clientVad,
-      echoCancellationEnabled: true, micAgc2Enabled: false,
-    });
-    if (generation === this.generation) this.capture = engine.createCapture();
+    try {
+      // Load the native module here so an unavailable SDK becomes a visible session error.
+      const { AudioEngine } = require('@tellus-ai/audio-sdk-mobile') as typeof import('@tellus-ai/audio-sdk-mobile');
+      const engine = await AudioEngine.init({
+        micEnabled: true, processing: { sampleRate: 16000, chunkDurationMs: 20 },
+        transport: { codec: 'opus', bitrateBps: 64000 },
+        denoiseEnabled: process.env.EXPO_PUBLIC_TELLUS_DENOISE !== 'false', vadEnabled: false,
+        echoCancellationEnabled: true, micAgc2Enabled: false,
+      });
+      if (generation === this.generation) this.capture = engine.createCapture();
+    } catch (error) {
+      throw new Error(`Audio SDK is required but could not be initialized: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void> {

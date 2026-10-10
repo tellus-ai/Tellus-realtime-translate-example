@@ -42,6 +42,7 @@ it('passes the existing dotenv variable names through Expo config to the app', (
     REALTIME_SPEECH_WS_URL: ' wss://socket.fixture.test/ ',
     APP_ORIGIN: ' https://app.fixture.test/ ',
   })).toEqual({
+    audioSdkEnabled: true,
     accessToken: 'fixture-access-token',
     httpBaseUrl: 'https://http.fixture.test',
     websocketBaseUrl: 'wss://socket.fixture.test',
@@ -82,9 +83,16 @@ it('keeps the defaults when the settings are missing or blank', () => {
     REALTIME_SPEECH_WS_URL: '',
     APP_ORIGIN: ' ',
   })).toEqual({
+    audioSdkEnabled: true,
     accessToken: '',
     httpBaseUrl: 'https://stgrtsapi.tellus.ai.kr',
     websocketBaseUrl: 'wss://stgrtsapi.tellus.ai.kr',
     appOrigin: 'https://devapp.tellus.ai.kr',
   });
+});
+
+it('disables SDK mode only when explicitly configured off', () => {
+  expect(resolveAppSettings({ TELLUS_AUDIO_SDK_ENABLED: ' false ' }).audioSdkEnabled).toBe(false);
+  expect(resolveAppSettings({ EXPO_PUBLIC_TELLUS_AUDIO_SDK_ENABLED: 'false' }).audioSdkEnabled).toBe(false);
+  expect(resolveAppSettings({ TELLUS_AUDIO_SDK_ENABLED: 'true' }).audioSdkEnabled).toBe(true);
 });

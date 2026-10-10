@@ -11,6 +11,7 @@ const INITIAL_SNAPSHOT: SessionSnapshot = {
   resultConnection: 'closed',
   audioConnection: 'closed',
   rows: [],
+  audioSdkReady: false,
   vad: { enabled: false, ready: false, mode: 'disabled', gate: 'open', isSpeech: false, probability: 0, level: 'off' },
   error: null,
 };

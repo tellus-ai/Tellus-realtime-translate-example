@@ -16,6 +16,7 @@ export type DesktopSnapshotChannel = 'realtime:snapshot';
 export type DesktopConfigArgumentPrefix = '--tellus-desktop-config=';
 
 export interface DesktopConfig {
+  audioSdkEnabled: boolean;
   accessTokenConfigured: boolean;
 }
 

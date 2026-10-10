@@ -2,6 +2,7 @@ import { RealtimeApiError, requestJson } from './httpClient';
 import type { RealtimeAudioFormat } from '../audio/RealtimeAudioFormat';
 
 export interface RealtimeEndpoints {
+  audioSdkEnabled?: boolean;
   httpBaseUrl: string;
   websocketBaseUrl: string;
 }

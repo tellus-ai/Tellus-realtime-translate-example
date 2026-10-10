@@ -6,6 +6,7 @@ const DEFAULT_WS_URL = 'wss://stgrtsapi.tellus.ai.kr';
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 export interface RealtimeSpeechConfig {
+  audioSdkEnabled: boolean;
   accessToken: string;
   httpBaseUrl: string;
   websocketBaseUrl: string;
@@ -24,6 +25,7 @@ export function resolveRealtimeSpeechConfig(
   env: Readonly<Record<string, string | undefined>>,
 ): RealtimeSpeechConfig {
   return {
+    audioSdkEnabled: env.TELLUS_AUDIO_SDK_ENABLED?.trim() !== 'false',
     accessToken: env.API_KEY?.trim() ?? '',
     httpBaseUrl: readBaseUrl('REALTIME_SPEECH_HTTP_URL', env.REALTIME_SPEECH_HTTP_URL, DEFAULT_HTTP_URL, 'https:', 'http:'),
     websocketBaseUrl: readBaseUrl('REALTIME_SPEECH_WS_URL', env.REALTIME_SPEECH_WS_URL, DEFAULT_WS_URL, 'wss:', 'ws:'),

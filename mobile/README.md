@@ -30,7 +30,8 @@ npm run ios
 
 - 처리·전송: Opus, 16kHz mono, 20ms
 - denoise: FastEnhancer 기본 활성화; `EXPO_PUBLIC_TELLUS_DENOISE=false`로 초기 비활성화 가능
-- VAD: UI에서 세션 시작 전에 선택; 활성화하면 native Silero gate status를 해당 Opus payload보다 먼저 전송
+- Audio SDK: SDK 활성화 설정에 따라 UI에 `사용 중 / 사용하지 않음` 표시; SDK 초기화 실패·미사용 시 Conversation 생성 전에 오류 표시
+- VAD: audio-sdk 사용 시 클라이언트 VAD 비활성화 (`vadEnabled: false`, `client_vad: false`); SDK는 기본 활성화이므로 앱 실행 직후부터 정지·오류 후에도 토글을 OFF로 고정하고 클릭·변경 차단; `.env`의 `TELLUS_AUDIO_SDK_ENABLED=false`로 명시적으로 끈 경우에만 VAD 선택 가능 (SDK 미사용 세션 시작 오류 유지), gate 이벤트 전송 없음
 - background·interruption·route 변경: 자동 캡처 재개 없이 중단하며 새 승인이 필요한 연결은 재승인 후 재개
 - TTS: SDK `playback` 또는 `playbackEncoded`를 사용하면 OS 재생과 같은 PCM이 Rust AEC reference에 들어간다
 

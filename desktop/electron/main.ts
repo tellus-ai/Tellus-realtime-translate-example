@@ -80,7 +80,7 @@ function startApp(): void {
   // REST and both WebSockets run here without an Origin header, like other native clients.
   // The session opens its WebSockets with the `ws` package (realtime/nodeWebSocket.ts).
   realtimeSession = new RealtimeTranslationSession(
-    { websocketBaseUrl: config.websocketBaseUrl },
+    { websocketBaseUrl: config.websocketBaseUrl, audioSdkEnabled: config.audioSdkEnabled },
     api,
     () => createMicrophoneCapture(requestMicrophoneAccess),
     getAccessToken,
@@ -98,13 +98,13 @@ function startApp(): void {
     session: realtimeSession,
     isTrustedSender: (event) => isTrustedIpcSender(event, isTrusted),
   });
-  mainWindow = createMainWindow({ accessTokenConfigured: Boolean(config.accessToken) });
-  // Load the native engine and its models in the background so the first Start is fast.
+  mainWindow = createMainWindow({ accessTokenConfigured: Boolean(config.accessToken), audioSdkEnabled: config.audioSdkEnabled });
+  // Load the native engine in the background so the first Start is fast.
   // A failure here is reported again when the user presses Start.
-  initializeAudioEngine().then(
+  if (config.audioSdkEnabled) initializeAudioEngine().then(
     (engine) => {
       const status = engine.getStatus();
-      console.log(`[audio-engine] Ready: ${status.processingSampleRate} Hz, Silero VAD ${status.vad.ready ? 'loaded' : 'not loaded'}`);
+      console.log(`[audio-sdk] Ready: ${status.processingSampleRate} Hz, client VAD disabled`);
     },
     (error: unknown) => console.error('[audio-engine] Initialization failed:', error),
   );

@@ -23,10 +23,12 @@ export function TranslationExample() {
   const realtime = useRealtimeTranslation();
   const [sourceLanguage, setSourceLanguage] = useState('ko-KR');
   const [targetLanguage, setTargetLanguage] = useState('en-US');
-  const [clientVad, setClientVad] = useState(true);
+  const [vadSelected, setVadSelected] = useState(false);
+  const audioSdkEnabled = realtimeSpeechConfig.audioSdkEnabled !== false;
+  const clientVad = vadSelected && !audioSdkEnabled;
   const tokenConfigured = Boolean(realtimeSpeechConfig.accessToken);
-  const active = ['preparing-vad', 'creating', 'configuring', 'connecting', 'recording', 'paused', 'reconnecting', 'stopping'].includes(realtime.phase);
-  const busy = ['preparing-vad', 'creating', 'configuring', 'connecting', 'stopping'].includes(realtime.phase);
+  const active = ['preparing-audio', 'creating', 'configuring', 'connecting', 'recording', 'paused', 'reconnecting', 'stopping'].includes(realtime.phase);
+  const busy = ['preparing-audio', 'creating', 'configuring', 'connecting', 'stopping'].includes(realtime.phase);
 
   return (
     <main className="example-shell">
@@ -44,7 +46,7 @@ export function TranslationExample() {
             {LANGUAGES.map(([code, label]) => <option value={code} key={code}>{label}</option>)}
           </select>
         </label>
-        <VADToggle enabled={clientVad} disabled={active} onChange={setClientVad} />
+        <VADToggle enabled={clientVad} disabled={active} audioSdkEnabled={audioSdkEnabled} onChange={setVadSelected} />
         <label>
           Target Language
           <select value={targetLanguage} disabled={active} onChange={(event) => setTargetLanguage(event.target.value)}>
@@ -67,7 +69,8 @@ export function TranslationExample() {
 
       <ConnectionStatus result={realtime.resultConnection} audio={realtime.audioConnection} />
       <p className="phase">Status: {realtime.phase}</p>
-      <VADStatus snapshot={realtime.vad} />
+      <p className="phase">Audio SDK: {audioSdkEnabled ? '사용 중' : '사용하지 않음'}</p>
+      <VADStatus snapshot={realtime.vad} audioSdkEnabled={audioSdkEnabled} />
       {realtime.error && <p className="error" role="alert">{realtime.error}</p>}
       <TranslationPanels rows={realtime.rows} targetLanguage={targetLanguage} />
     </main>

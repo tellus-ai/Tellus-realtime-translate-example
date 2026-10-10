@@ -91,6 +91,7 @@ export interface CaptureVadStatus {
 
 /** The parts of the audio engine capture the session drives (`AudioCapture` in @tellus-ai/audio-sdk-desktop). */
 export interface MicrophoneCapture extends AuthorizableAudioCapture {
+  readonly audioSdkReady: boolean;
   onError(callback: (error: Error | null, detail: { message: string; recoverable: boolean }) => unknown): void;
   start(callback: (error: Error | null, chunk: CapturedAudioChunk) => unknown): void;
   pause(): void;
@@ -101,6 +102,7 @@ export interface MicrophoneCapture extends AuthorizableAudioCapture {
 }
 
 export interface RealtimeEndpoints {
+  audioSdkEnabled?: boolean;
   websocketBaseUrl: string;
 }
 
@@ -111,6 +113,7 @@ export class RealtimeTranslationSession {
     resultConnection: 'closed',
     audioConnection: 'closed',
     rows: [],
+    audioSdkReady: false,
     vad: disabledVadSnapshot(false),
     error: null,
   };
@@ -187,24 +190,27 @@ export class RealtimeTranslationSession {
     this.statusSequence = 0;
     this.desiredPaused = false;
     this.acceptingAudio = false;
-    this.clientVad = input.clientVad;
+    this.clientVad = false;
     this.engineGate = 'closed';
     this.update({
       phase: 'preparing-audio',
       rows: [],
       error: null,
       conversationId: null,
-      vad: input.clientVad ? sileroVadSnapshot(false) : disabledVadSnapshot(true),
+      audioSdkReady: false,
+      vad: disabledVadSnapshot(true),
     });
 
     try {
+      if (this.endpoints.audioSdkEnabled === false) throw new Error('Audio SDK is required. Enable audio-sdk before starting a session.');
       const capture = await this.createCapture();
       if (generation !== this.generation) {
         capture.stop();
         return;
       }
       this.capture = capture;
-      capture.setVadEnabled(input.clientVad);
+      if (!capture.audioSdkReady) throw new Error('Audio SDK is required. Non-SDK audio capture is not supported.');
+      capture.setVadEnabled(false);
       capture.onError((_error, detail) => {
         if (this.capture === capture && !detail.recoverable) {
           this.failActiveSession(`Audio capture failed: ${detail.message}`);
@@ -212,7 +218,7 @@ export class RealtimeTranslationSession {
       });
       this.update({
         phase: 'creating',
-        vad: input.clientVad ? this.readVadSnapshot() : this.snapshot.vad,
+        audioSdkReady: true,
       });
 
       const conversationId = await this.api.createConversation();
@@ -221,7 +227,7 @@ export class RealtimeTranslationSession {
         return;
       }
       this.update({ phase: 'configuring', conversationId });
-      await this.api.saveInterpretationSettings(conversationId, input);
+      await this.api.saveInterpretationSettings(conversationId, { ...input, clientVad: false });
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
       // Result first: `/audio` is opened only after Result is ready. A socket that does not
@@ -687,6 +693,7 @@ export class RealtimeTranslationSession {
     } catch {
       // The native capture is released either way.
     }
+    this.update({ audioSdkReady: false });
   }
 
   /** The server reported the end of the Conversation, so there is nothing left for `POST /end`. */

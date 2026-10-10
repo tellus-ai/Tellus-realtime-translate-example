@@ -32,7 +32,7 @@ type NativeWebSocketConstructor = new (
 interface PendingOpen { timeout: Timer; resolve(usable: boolean): void }
 
 export class RealtimeTranslationSession {
-  private snapshot: SessionSnapshot = { phase: 'idle', conversationId: null, resultConnection: 'closed', audioConnection: 'closed', rows: [], error: null, vad: DISABLED_VAD_SNAPSHOT };
+  private snapshot: SessionSnapshot = { phase: 'idle', conversationId: null, resultConnection: 'closed', audioConnection: 'closed', rows: [], audioSdkReady: false, error: null, vad: DISABLED_VAD_SNAPSHOT };
   private listeners = new Set<Listener>();
   private sockets: Record<RealtimeSocket, WebSocket | null> = { result: null, audio: null };
   // The server explains an error close with a `system.error` just before it.
@@ -81,26 +81,29 @@ export class RealtimeTranslationSession {
     this.sampleCursor = 0;
     this.statusSequence = 0;
     this.desiredPaused = false;
-    this.clientVad = input.clientVad;
+    this.clientVad = false;
     this.acceptingAudio = false;
     this.update({
       phase: 'creating',
       rows: [],
       error: null,
       conversationId: null,
-      vad: input.clientVad ? INITIAL_SILERO_VAD_SNAPSHOT : DISABLED_VAD_SNAPSHOT,
+      audioSdkReady: false,
+      vad: DISABLED_VAD_SNAPSHOT,
     });
     try {
-      await this.microphone.prepare(input.clientVad);
+      if (this.endpoints.audioSdkEnabled === false) throw new Error('Audio SDK is required. Enable audio-sdk before starting a session.');
+      await this.microphone.prepare(false);
       if (generation !== this.generation) return;
-      if (input.clientVad) this.update({ vad: { ...INITIAL_SILERO_VAD_SNAPSHOT, ready: true } });
+      if (!this.microphone.audioSdkReady) throw new Error('Audio SDK is required. Non-SDK audio capture is not supported.');
+      this.update({ audioSdkReady: true });
       const conversationId = await createConversation(this.endpoints, this.accessToken);
       if (generation !== this.generation) {
         await endConversation(this.endpoints, this.accessToken, conversationId).catch(() => {});
         return;
       }
       this.update({ phase: 'configuring', conversationId });
-      await saveInterpretationSettings(this.endpoints, this.accessToken, conversationId, input.sourceLanguage, input.targetLanguage, input.clientVad);
+      await saveInterpretationSettings(this.endpoints, this.accessToken, conversationId, input.sourceLanguage, input.targetLanguage, false);
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
       // Result first: `/audio` is opened only after Result is ready. A socket that does not
@@ -200,6 +203,7 @@ export class RealtimeTranslationSession {
     this.intentionalClose = true;
     this.update({ phase: 'stopping' });
     await this.microphone.stop().catch(() => {});
+    this.update({ audioSdkReady: false });
     this.acceptingAudio = false;
     if (this.clientVad) this.closeOpenVadGate('capturing');
     this.sendAudioStatus('idle');
@@ -445,6 +449,7 @@ export class RealtimeTranslationSession {
     this.closeSocket('audio');
     if (!keepResultSocket) this.closeSocket('result');
     await this.microphone.stop().catch(() => {});
+    this.update({ audioSdkReady: false });
   }
   private enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
     const result = this.lifecycleQueue.then(operation);

@@ -4,6 +4,7 @@ import type { MicrophoneRecorder } from '../src/audio/BrowserMicrophone';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 
 class FakeMicrophone implements MicrophoneRecorder {
+  audioSdkReady = true;
   preparedVad?: boolean;
   authorization: Promise<void> = Promise.resolve();
   started = false;
@@ -97,7 +98,7 @@ describe('SDK output transport', () => {
     await session.stop();
   });
 
-  it('sends engine transitions before unchanged Opus bytes and flush tail before idle', async () => {
+  it('ignores gate events with client VAD disabled and flushes unchanged Opus bytes before idle', async () => {
     const microphone = new FakeMicrophone();
     const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
     await session.start(input);
@@ -105,17 +106,16 @@ describe('SDK output transport', () => {
     microphone.emit(chunk([9], 'speech_gate_closed'));
     const socket = FakeSocket.instances[1]!;
     expect(socket.url).toContain('audio_format=opus');
-    expect(status(socket.messages[1])).toMatchObject({ boundary_sample: 0, vad: { event: 'speech_gate_opened' } });
-    expect(Array.from(new Uint8Array(socket.messages[2] as ArrayBuffer))).toEqual([1, 2, 3]);
-    expect(status(socket.messages[3])).toMatchObject({ boundary_sample: 320, vad: { event: 'speech_gate_closed' } });
-    expect(Array.from(new Uint8Array(socket.messages[4] as ArrayBuffer))).toEqual([9]);
+    expect(status(socket.messages[0]).vad).toEqual({ enabled: false });
+    expect(Array.from(new Uint8Array(socket.messages[1] as ArrayBuffer))).toEqual([1, 2, 3]);
+    expect(Array.from(new Uint8Array(socket.messages[2] as ArrayBuffer))).toEqual([9]);
     microphone.tail = chunk([5, 6], undefined, 7);
     await session.stop();
-    expect(Array.from(new Uint8Array(socket.messages[5] as ArrayBuffer))).toEqual([5, 6]);
-    expect(status(socket.messages[6])).toMatchObject({ boundary_sample: 960, mic: { state: 'idle' } });
+    expect(Array.from(new Uint8Array(socket.messages[3] as ArrayBuffer))).toEqual([5, 6]);
+    expect(status(socket.messages[4])).toMatchObject({ boundary_sample: 960, mic: { state: 'idle' }, vad: { enabled: false } });
   });
 
-  it('suppresses late output while paused and announces a resumed gate at the uplink cursor', async () => {
+  it('suppresses late output while paused and resumes with client VAD disabled', async () => {
     const microphone = new FakeMicrophone();
     const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
     await session.start(input);
@@ -127,7 +127,7 @@ describe('SDK output transport', () => {
     expect(socket.messages).toHaveLength(count);
     await session.resume();
     microphone.emit(chunk([3], 'speech_gate_opened'));
-    expect(status(socket.messages.at(-2)!)).toMatchObject({ boundary_sample: 320, vad: { event: 'speech_gate_opened' } });
+    expect(status(socket.messages.at(-2)!)).toMatchObject({ boundary_sample: 320, vad: { enabled: false } });
     await session.stop();
   });
 
@@ -144,10 +144,10 @@ describe('SDK output transport', () => {
     await session.stop();
   });
 
-  it('preserves server VAD settings without changing the Rust Opus codec', async () => {
+  it('overrides requested client VAD without changing the Rust Opus codec', async () => {
     const microphone = new FakeMicrophone();
     const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
-    await session.start({ ...input, clientVad: false });
+    await session.start(input);
     expect(microphone.preparedVad).toBe(false);
     expect(FakeSocket.instances[1]?.url).toContain('audio_format=opus');
     const settings = JSON.parse(String(vi.mocked(fetch).mock.calls[1]?.[1]?.body));

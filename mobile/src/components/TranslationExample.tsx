@@ -25,7 +25,9 @@ export function TranslationExample() {
   const realtime = useRealtimeTranslation();
   const [sourceLanguage, setSourceLanguage] = useState('ko-KR');
   const [targetLanguage, setTargetLanguage] = useState('en-US');
-  const [clientVad, setClientVad] = useState(true);
+  const [vadSelected, setVadSelected] = useState(false);
+  const audioSdkEnabled = realtimeSpeechConfig.audioSdkEnabled !== false;
+  const clientVad = vadSelected && !audioSdkEnabled;
   const tokenConfigured = Boolean(realtimeSpeechConfig.accessToken);
   const active = ['creating', 'configuring', 'connecting', 'recording', 'paused', 'reconnecting', 'stopping'].includes(realtime.phase);
   const busy = ['creating', 'configuring', 'connecting', 'stopping'].includes(realtime.phase);
@@ -42,7 +44,7 @@ export function TranslationExample() {
         <LanguageButtons label="Source Language" selected={sourceLanguage} disabled={active} onChange={setSourceLanguage} />
         <LanguageButtons label="Target Language" selected={targetLanguage} disabled={active} onChange={setTargetLanguage} />
 
-        <VADToggle enabled={clientVad} disabled={active} onChange={setClientVad} />
+        <VADToggle enabled={clientVad} disabled={active} audioSdkEnabled={audioSdkEnabled} onChange={setVadSelected} />
 
         <View style={styles.controls}>
           <ActionButton label="Start" disabled={active || !tokenConfigured} onPress={() => void realtime.start({ sourceLanguage, targetLanguage, clientVad })} />
@@ -54,7 +56,8 @@ export function TranslationExample() {
 
         <ConnectionStatus result={realtime.resultConnection} audio={realtime.audioConnection} />
         <Text style={styles.phase}>Status: {realtime.phase}</Text>
-        <VADStatus snapshot={realtime.vad} />
+        <Text style={styles.phase}>Audio SDK: {audioSdkEnabled ? '사용 중' : '사용하지 않음'}</Text>
+        <VADStatus snapshot={realtime.vad} audioSdkEnabled={audioSdkEnabled} />
         {realtime.error ? <Text style={styles.error}>{realtime.error}</Text> : null}
         <TranslationList rows={realtime.rows} targetLanguage={targetLanguage} />
       </ScrollView>
