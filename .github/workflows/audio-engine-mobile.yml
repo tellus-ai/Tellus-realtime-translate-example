@@ -123,6 +123,7 @@ jobs:
           npm audit --omit=dev --audit-level=high
           cd ../Tellus-realtime-translate-example/mobile
           npm ci --ignore-scripts --legacy-peer-deps
+          cp -R ../../tellus-audio-sdk/platforms/mobile/vendor node_modules/@tellus-ai/audio-sdk-mobile/
           npm run verify:pre-commit
           cd ../web
           npm ci --ignore-scripts
@@ -189,7 +190,7 @@ jobs:
           xcrun simctl spawn "$DEVICE_ID" defaults write com.tellus.realtimetranslationexample RCT_jsLocation -string localhost:8088
           xcrun simctl launch "$DEVICE_ID" com.tellus.realtimetranslationexample
           node scripts/native-sdk-probe.mjs "$GITHUB_WORKSPACE/Tellus-audio-engine" \
-            "$GITHUB_WORKSPACE/tellus-audio-sdk/platforms/mobile/vendor/ios/models" "$RUNNER_TEMP/model-key.txt" > "$RUNNER_TEMP/native-probe.json"
+            "$GITHUB_WORKSPACE/Tellus-realtime-translate-example/mobile/node_modules/@tellus-ai/audio-sdk-mobile/vendor/ios/models" "$RUNNER_TEMP/model-key.txt" > "$RUNNER_TEMP/native-probe.json"
       - name: Real Android SDK metadata and synthetic playback probe
         if: matrix.platform == 'android'
         working-directory: Tellus-realtime-translate-example/mobile
@@ -211,7 +212,7 @@ jobs:
           adb reverse tcp:8088 tcp:8088
           adb shell am start -n com.tellus.realtimetranslationexample/.MainActivity
           node scripts/native-sdk-probe.mjs "$GITHUB_WORKSPACE/Tellus-audio-engine" \
-            "$GITHUB_WORKSPACE/tellus-audio-sdk/platforms/mobile/vendor/android/models" "$RUNNER_TEMP/model-key.txt" > "$RUNNER_TEMP/native-probe.json"
+            "$GITHUB_WORKSPACE/Tellus-realtime-translate-example/mobile/node_modules/@tellus-ai/audio-sdk-mobile/vendor/android/models" "$RUNNER_TEMP/model-key.txt" > "$RUNNER_TEMP/native-probe.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

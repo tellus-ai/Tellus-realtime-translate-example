@@ -17,7 +17,7 @@ Each app reads `API_KEY` from its local `.env` file and uses it in the
 
 ## 플랫폼별 SDK 설치
 
-각 예제는 필요한 플랫폼 SDK만 설치합니다. 개발 의존성은 sibling SDK 저장소의 `platforms/web`, `platforms/mobile`, `platforms/desktop`에 연결합니다.
+각 예제는 필요한 플랫폼 SDK **0.2.3**만 설치합니다. 개발 의존성은 sibling SDK 저장소의 `platforms/web`, `platforms/mobile`, `platforms/desktop`을 사용합니다. 각 예제의 `.npmrc`에 `install-links=true`를 설정해 SDK를 해당 앱의 `node_modules`에 복사 설치합니다. SDK 0.2.3의 release manifest는 엔진 **0.3.2**를 지정합니다.
 
 | 예제 | 설치 패키지 |
 | --- | --- |
@@ -25,7 +25,7 @@ Each app reads `API_KEY` from its local `.env` file and uses it in the
 | 모바일 | `@tellus-ai/audio-sdk-mobile` |
 | 데스크톱 | `@tellus-ai/audio-sdk-desktop` |
 
-엔진 또는 SDK 구현을 변경했으면 예제를 실행하기 전에 산출물을 갱신합니다. 플랫폼 바이너리와 암호화 모델은 해당 SDK 패키지의 installer로 준비합니다.
+엔진 또는 SDK 구현을 변경했으면 예제를 실행하기 전에 산출물을 갱신하고 예제 의존성을 다시 설치합니다. 플랫폼 바이너리와 암호화 모델은 해당 SDK 패키지의 installer로 준비합니다. 이미 준비한 로컬 `vendor` 자산을 사용하는 설치 방법은 각 예제 README를 따릅니다.
 
 ```sh
 npm --prefix ../Tellus-audio-engine run build:runtime

@@ -9,14 +9,14 @@ const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--mic'), 'Expected only --mic');
 const microphone = args[0] === '--mic';
-const sdk = path.resolve(desktop, '../../tellus-audio-sdk/platforms/desktop');
 const engineRoot = path.resolve(process.env.TELLUS_ENGINE_ROOT ?? path.resolve(desktop, '../../Tellus-audio-engine'));
 const requireDesktop = createRequire(path.join(desktop, 'package.json'));
+const sdk = path.resolve(path.dirname(requireDesktop.resolve('@tellus-ai/audio-sdk-desktop')), '../../../..');
 const sha = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 assert.equal(process.env.TELLUS_ENGINE_TEST_LICENSE, '1');
-assert.equal(fs.realpathSync(requireDesktop.resolve('@tellus-ai/audio-sdk-desktop')), fs.realpathSync(path.join(sdk, 'runtime/platforms/desktop/electron/index.js')));
+assert.equal(JSON.parse(fs.readFileSync(path.join(sdk, 'package.json'), 'utf8')).version, '0.2.3');
 const nativeName = 'audio-capture.darwin-universal.node';
-const nativeSha = sha(path.join(engineRoot, nativeName));
+const nativeSha = sha(path.resolve(desktop, '../../tellus-audio-sdk/platforms/desktop/vendor/darwin-universal', nativeName));
 assert.equal(sha(path.join(sdk, 'vendor/darwin-universal', nativeName)), nativeSha);
 const requireEngine = createRequire(path.join(engineRoot, 'package.json'));
 const { signTestPermit } = requireEngine('./scripts/ci/engine-authorization-fixture');

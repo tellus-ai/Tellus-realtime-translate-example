@@ -2265,7 +2265,7 @@ PODS:
   - SDWebImageWebPCoder (0.14.6):
     - libwebp (~> 1.0)
     - SDWebImage/Core (~> 5.17)
-  - TellusAudioSdk (0.2.1):
+  - TellusAudioSdk (0.2.3):
     - hermes-engine
     - NitroModules
     - onnxruntime-c (= 1.24.3)
@@ -2388,7 +2388,7 @@ DEPENDENCIES:
   - RNReanimated (from `../node_modules/react-native-reanimated`)
   - RNScreens (from `../node_modules/react-native-screens`)
   - RNWorklets (from `../node_modules/react-native-worklets`)
-  - TellusAudioSdk (from `../../../tellus-audio-sdk/platforms/mobile`)
+  - "TellusAudioSdk (from `../node_modules/@tellus-ai/audio-sdk-mobile`)"
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
 
 SPEC REPOS:
@@ -2593,7 +2593,7 @@ EXTERNAL SOURCES:
   RNWorklets:
     :path: "../node_modules/react-native-worklets"
   TellusAudioSdk:
-    :path: "../../../tellus-audio-sdk/platforms/mobile"
+    :path: "../node_modules/@tellus-ai/audio-sdk-mobile"
   Yoga:
     :path: "../node_modules/react-native/ReactCommon/yoga"
 
@@ -2700,7 +2700,7 @@ SPEC CHECKSUMS:
   SDWebImageAVIFCoder: afe194a084e851f70228e4be35ef651df0fc5c57
   SDWebImageSVGCoder: 15a300a97ec1c8ac958f009c02220ac0402e936c
   SDWebImageWebPCoder: e38c0a70396191361d60c092933e22c20d5b1380
-  TellusAudioSdk: 1afb70c2147c034b757b1d6fda4ef3bafcfb8d72
+  TellusAudioSdk: 18179bbe8263ce6b671c67a540d3f559040d3e4a
   Yoga: 7ca324e377340c274423a58a5494b08c2927f470
 
 PODFILE CHECKSUM: 6fef0c4c6b3284a039cacea8e5821fe783eafc63

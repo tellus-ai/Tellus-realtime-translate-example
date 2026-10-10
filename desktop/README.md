@@ -24,23 +24,24 @@ You can also use the development script, which checks `.env` first.
 ./dev.sh
 ```
 
-`npm run setup` installs SDK **0.2.2** from the GitHub `v0.2.2` tag, with the exact commit recorded
-in `package-lock.json`. The SDK installer uses the existing customer installation token to request
-file-specific download tokens for native engine **0.3.1** and its checksum from
+`npm run setup` installs SDK **0.2.3** from the sibling `../../tellus-audio-sdk/platforms/desktop`
+package, with its version recorded in `package-lock.json`. The SDK installer uses the existing customer installation token to request
+file-specific download tokens for native engine **0.3.2** and its checksum from
 `TELLUS_AUDIO_DOWNLOAD_BASE_URL` (staging by default), then
 downloads the engine files from `https://download.tellus.ai.kr` and verifies SHA-256. Login and download
 tokens are kept out of package URLs, the lockfile, and logs. A CDN `401` gets one fresh grant and one retry.
 
 The token API must be deployed on the selected Realtime Speech server. Its environment prefix must
 contain the native engine archive for your platform and its `.sha256` file.
-For staging this is `stg/audio/engine/v0.3.1/`. A missing API returns
+For staging this is `stg/audio/engine/v0.3.2/`. A missing API returns
 `404`; a missing artifact or invalid installation token must be resolved before setup can finish.
 
 `TELLUS_AUDIO_ENGINE_TOKEN` is the existing Tellus-issued customer installation token. Installation
 does not use `API_KEY` or require an app login. `API_KEY` remains the login access token for REST calls
 and engine execution approval at runtime. Installation and execution token renewal are separate.
 Setup loads `.env` and passes both the engine token and download base URL to npm and its child
-processes. This also covers the temporary Git clone where npm prepares the SDK. Setup runs `npm ci`
+processes. The download server must match the installation token's environment; set
+`TELLUS_AUDIO_DOWNLOAD_BASE_URL` separately when the runtime server uses a different environment. Setup runs `npm ci`
 against the committed lockfile. A direct `npm install` or `npm ci` requires exporting both
 `TELLUS_AUDIO_ENGINE_TOKEN` and `TELLUS_AUDIO_DOWNLOAD_BASE_URL` in the shell first.
 
@@ -246,8 +247,19 @@ npm test
 npm run build
 ```
 
-현재 개발 후보는 sibling `../../tellus-audio-sdk/platforms/desktop`를 사용한다. SDK의 `vendor/darwin-universal`에
-같은 엔진 후보의 universal NAPI와 ORT/models를 준비한 뒤 `npm ci --ignore-scripts`로 설치한다.
+현재 개발 후보는 sibling `../../tellus-audio-sdk/platforms/desktop`의 SDK 0.2.3을 사용한다.
+`.npmrc`의 `install-links=true`로 SDK를 앱의 `node_modules`에 복사 설치한다. 같은 엔진 후보의
+universal NAPI와 ORT/models가 sibling SDK의 `vendor/darwin-universal`에 준비되어 있으면
+다음 명령으로 다운로드 없이 로컬 설치할 수 있다.
+
+```bash
+npm ci --ignore-scripts
+node node_modules/electron/install.js
+cp -R ../../tellus-audio-sdk/platforms/desktop/vendor node_modules/@tellus-ai/audio-sdk-desktop/
+node node_modules/@tellus-ai/audio-sdk-desktop/dist/installer/check-binary-cli.js
+npm run build
+```
+
 공개 테스트 서명 키를 신뢰하도록 빌드한 테스트 바이너리에서 다음 명령은 원격 API를 호출하지 않는다.
 
 ```bash

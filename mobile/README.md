@@ -1,6 +1,6 @@
 # 모바일 실시간 번역 예제
 
-Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile`가 OS 캡처, Rust DSP·FastEnhancer·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/audio`로 전달한다.
+Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile` 0.2.3이 OS 캡처, Rust DSP·FastEnhancer·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/audio`로 전달한다.
 
 ```sh
 cp .env.example .env
@@ -14,7 +14,17 @@ npm run ios
 
 `./dev.sh [start|ios|android]`도 SDK 또는 엔진 파일이 없으면 같은 setup을 실행한다. setup 이후 `npm run ios` 또는 `npm run android`로 SDK가 포함된 개발 앱을 빌드한다.
 
-현재 workspace의 SDK candidate는 `../../tellus-audio-sdk/platforms/mobile`에 연결된다. SDK installer가 플랫폼 binary와 `fe-s16.temc`, `fe-s48.temc`, `silero-vad.temc` 암호화 모델을 준비해야 한다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 고객 앱 코드는 React Native TypeScript로 유지하며 Swift·Kotlin·Podfile·Gradle을 직접 작성하지 않는다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
+현재 workspace는 `../../tellus-audio-sdk/platforms/mobile`의 SDK 0.2.3을 사용한다. `.npmrc`의 `install-links=true`로 앱의 `node_modules`에 복사 설치한다. SDK installer가 플랫폼 binary와 `fe-s16.temc`, `fe-s48.temc`, `silero-vad.temc` 암호화 모델을 준비해야 한다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 고객 앱 코드는 React Native TypeScript로 유지하며 Swift·Kotlin·Podfile·Gradle을 직접 작성하지 않는다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
+
+sibling SDK의 `vendor`에 iOS·Android 바이너리와 모델이 이미 준비되어 있으면 다운로드 없이 로컬 설치할 수 있다. 설치 후 iOS Pods를 갱신하고 앱을 다시 빌드한다.
+
+```sh
+npm ci --ignore-scripts --legacy-peer-deps
+cp -R ../../tellus-audio-sdk/platforms/mobile/vendor node_modules/@tellus-ai/audio-sdk-mobile/
+(cd ios && pod install --no-repo-update)
+npm run ios
+# 또는 npm run android
+```
 
 `.env`의 `API_KEY`에 OAuth access token을 설정하고 서로 다른 두 언어를 선택한다. `/audio` socket의 `attachEngineAuthorization.ready`가 permit과 모델 키를 적용한 뒤 마이크 권한을 요청하고 캡처를 시작한다. 새 socket마다 같은 capture를 재승인하며, 승인 폐기 시 OS 캡처와 대기 출력도 중단한다.
 
@@ -42,7 +52,7 @@ Android host는 `app.json`과 SDK plugin으로 생성하는 로컬 산출물이�
 ```sh
 NODE_OPTIONS=--dns-result-order=ipv4first CI=1 npx expo start --dev-client --localhost --port 8088
 TELLUS_ENGINE_TEST_LICENSE=1 METRO_URL=http://localhost:8088 node scripts/native-sdk-probe.mjs \
-  /path/to/Tellus-audio-engine /path/to/tellus-audio-sdk/platforms/mobile/vendor/ios/models /path/to/test-content-key.txt
+  /path/to/Tellus-audio-engine ./node_modules/@tellus-ai/audio-sdk-mobile/vendor/ios/models /path/to/test-content-key.txt
 ```
 
 Android에서는 `adb reverse tcp:8088 tcp:8088`을 설정하고 `ANDROID_SERIAL=emulator-5554`를 추가한다. probe가 테스트 승인 서버의 임시 포트도 자동으로 reverse한다. 승인 전 시작 거부, FE·VAD 모델 로드, 합성 재생 완료·취소, pause/reset/reconnect/stop-start, 정지 상태의 native 승인 만료를 검증한다. Android에서는 만료된 마이크 foreground service가 종료되었는지도 확인한다.

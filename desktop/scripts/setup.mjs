@@ -11,7 +11,7 @@ const installationToken = env.TELLUS_AUDIO_ENGINE_TOKEN;
 
 try {
   if (!installationToken) throw new Error('Set TELLUS_AUDIO_ENGINE_TOKEN to your Tellus-issued installation token in desktop/.env. API_KEY is only for runtime login.');
-  console.log('Installing SDK from GitHub and the native engine through CloudFront...');
+  console.log('Installing the desktop SDK and native engine assets...');
   if (!process.env.npm_execpath) throw new Error('Run this script with npm run setup.');
   const result = spawnSync(process.execPath, [process.env.npm_execpath, 'ci'], {
     cwd: fileURLToPath(root), stdio: 'inherit',

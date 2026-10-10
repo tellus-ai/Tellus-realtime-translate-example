@@ -1,6 +1,6 @@
 # Web Realtime Translation Example
 
-Vite/React 예제입니다. `@tellus-ai/audio-sdk-web`의 Rust WASM 엔진으로 마이크 오디오를 처리하고 Tellus Realtime Speech 서버로 전송합니다.
+Vite/React 예제입니다. `@tellus-ai/audio-sdk-web` 0.2.3의 Rust WASM 엔진으로 마이크 오디오를 처리하고 Tellus Realtime Speech 서버로 전송합니다.
 
 See the root [`README.md`](../README.md#api-contract) for the
 Swagger snapshot of the REST and WebSocket contracts used by this example.
@@ -22,6 +22,15 @@ You can also use the development script.
 `npm run setup` 전에 `.env`의 `TELLUS_AUDIO_ENGINE_TOKEN`에 Tellus에서 발급한 설치 토큰을 설정합니다. 설치 토큰은 실행 시 사용하는 OAuth `API_KEY`와 별개입니다. setup은 토큰을 먼저 검사하고 `npm ci`, SDK 설치기, `prepare:engine`을 순서대로 실행합니다. npm lifecycle 스크립트를 비활성화한 경우에도 SDK 설치기를 직접 실행하여 엔진과 모델 설치를 확인합니다. 다운로드 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정합니다. 설치 토큰에 `VITE_` 접두사를 붙이지 않습니다.
 
 SDK의 `vendor/web`에 엔진 `.mjs`·`.wasm`과 암호화 모델이 준비되어 있어야 합니다. `prepare:engine`은 SDK의 자산 복사 도구로 `public/tellus-audio/`를 생성하며 `dev`와 `build` 전에 자동 실행됩니다. 엔진 또는 SDK를 변경했으면 먼저 SDK를 다시 빌드합니다. 배포 서버의 모델 키 등록은 복사한 모델 manifest의 `keyId`와 일치해야 합니다.
+
+`.npmrc`의 `install-links=true`로 sibling SDK의 0.2.3 패키지를 앱의 `node_modules`에 복사 설치합니다. sibling SDK의 `vendor` 자산이 이미 준비되어 있으면 아래 명령으로 다운로드 없이 로컬 설치할 수 있습니다. SDK 소스를 변경한 뒤에는 다시 설치합니다.
+
+```bash
+npm ci --ignore-scripts
+cp -R ../../tellus-audio-sdk/platforms/web/vendor node_modules/@tellus-ai/audio-sdk-web/
+npm run prepare:engine
+npm run build
+```
 
 Set an OAuth access token in `API_KEY` in `.env`, select two different languages, and start the session.
 The token cannot be entered or changed in the browser UI. Restart the development server after changing
