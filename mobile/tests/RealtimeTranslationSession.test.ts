@@ -824,6 +824,29 @@ describe('RealtimeTranslationSession while starting', () => {
   const start = (session: RealtimeTranslationSession) =>
     session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
 
+  it.each([1001, 1006])('shows the server authorization reason when the native audio socket closes with %i', async (code) => {
+    FakeSocket.onConnect = (socket) => {
+      socket.accept();
+      if (socket.kind !== 'audio') return;
+      socket.receive(systemError(1008, 'engine_authentication_invalid', 'engine_authentication_invalid'));
+      socket.serverClose(code, 'Stream end encountered');
+    };
+    const { session, microphone } = createSession();
+    await start(session);
+    await flush();
+
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'error',
+      error: 'Audio engine authorization was rejected (1008: engine_authentication_invalid). Check that the server supports this SDK\'s authorization request and model-key protocol.',
+      resultConnection: 'closed',
+      audioConnection: 'closed',
+    });
+    expect(endRequests()).toHaveLength(1);
+    expect(microphone.capturing).toBe(false);
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(socketKinds()).toEqual(['result', 'audio']);
+  });
+
   it('fails the start with the server message when /audio is accepted and then refused', async () => {
     FakeSocket.onConnect = (socket) => {
       socket.accept();
