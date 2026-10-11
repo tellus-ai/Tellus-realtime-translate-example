@@ -4,6 +4,8 @@ import { browserEngineAssets } from '../config/browserEngineAssets';
 
 export interface MicrophoneRecorder {
   readonly audioSdkReady: boolean;
+  readonly denoiseEnabled: boolean;
+  setDenoiseEnabled(enabled: boolean): Promise<boolean>;
   prepare(clientVad: boolean): Promise<void>;
   authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void>;
   releaseAuthorization(): void;
@@ -20,8 +22,22 @@ export class BrowserMicrophone implements MicrophoneRecorder {
   private authorization?: EngineAuthorizationController;
   private callback?: Parameters<AudioCapture['start']>[0];
   private generation = 0;
+  private denoise = import.meta.env.VITE_TELLUS_DENOISE === 'true';
 
   get audioSdkReady(): boolean { return Boolean(this.capture); }
+  get denoiseEnabled(): boolean { return this.denoise; }
+
+  async setDenoiseEnabled(enabled: boolean): Promise<boolean> {
+    const capture = this.capture;
+    if (capture) {
+      await capture.setDenoiseEnabled(enabled);
+      const status = await capture.getStatus();
+      if (capture !== this.capture) return this.denoise;
+      this.denoise = status.denoiseEnabled;
+      if (this.denoise !== enabled) throw new Error('Audio SDK did not apply the requested denoise setting.');
+    } else this.denoise = enabled;
+    return this.denoise;
+  }
 
   async prepare(_clientVad: boolean): Promise<void> {
     await this.stop();
@@ -31,7 +47,7 @@ export class BrowserMicrophone implements MicrophoneRecorder {
       const engine = await AudioEngine.init({
         micEnabled: true, processing: { sampleRate: 16000, chunkDurationMs: 20 },
         transport: { codec: 'opus', bitrateBps: 64000 },
-        vadEnabled: false, denoiseEnabled: import.meta.env.VITE_TELLUS_DENOISE === 'true',
+        vadEnabled: false, denoiseEnabled: this.denoise,
         echoCancellationEnabled: true, micAgc2Enabled: false,
       }, browserEngineAssets(false));
       if (generation !== this.generation) {
@@ -39,7 +55,10 @@ export class BrowserMicrophone implements MicrophoneRecorder {
         return;
       }
       this.engine = engine;
-      this.capture = engine.createCapture();
+      const capture = engine.createCapture();
+      this.capture = capture;
+      const status = await capture.getStatus();
+      if (capture === this.capture) this.denoise = status.denoiseEnabled;
     } catch (error) {
       throw new Error(`Audio SDK is required but could not be initialized: ${error instanceof Error ? error.message : String(error)}`);
     }

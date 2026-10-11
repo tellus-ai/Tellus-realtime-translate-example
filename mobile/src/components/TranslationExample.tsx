@@ -6,6 +6,7 @@ import { useRealtimeTranslation } from '../hooks/useRealtimeTranslation';
 import { ConnectionStatus } from './ConnectionStatus';
 import { TranslationList } from './TranslationList';
 import { VADStatus, VADToggle } from './VADControl';
+import { DenoiseStatus, DenoiseToggle } from './DenoiseControl';
 
 const LANGUAGES = [
   { code: 'ko-KR', label: '한국어 (Korean)' },
@@ -45,9 +46,11 @@ export function TranslationExample() {
         <LanguageButtons label="Target Language" selected={targetLanguage} disabled={active} onChange={setTargetLanguage} />
 
         <VADToggle enabled={clientVad} disabled={active} audioSdkEnabled={audioSdkEnabled} onChange={setVadSelected} />
+        <DenoiseToggle snapshot={realtime.denoise} disabled={busy || realtime.phase === 'reconnecting'} audioSdkEnabled={audioSdkEnabled}
+          onChange={(enabled) => void realtime.setDenoiseEnabled(enabled)} />
 
         <View style={styles.controls}>
-          <ActionButton label="Start" disabled={active || !tokenConfigured} onPress={() => void realtime.start({ sourceLanguage, targetLanguage, clientVad })} />
+          <ActionButton label="Start" disabled={active || !tokenConfigured || realtime.denoise.updating} onPress={() => void realtime.start({ sourceLanguage, targetLanguage, clientVad })} />
           {realtime.phase === 'recording'
             ? <ActionButton label="Pause" onPress={() => void realtime.pause()} />
             : <ActionButton label="Resume" disabled={realtime.phase !== 'paused'} onPress={() => void realtime.resume()} />}
@@ -57,6 +60,7 @@ export function TranslationExample() {
         <ConnectionStatus result={realtime.resultConnection} audio={realtime.audioConnection} />
         <Text style={styles.phase}>Status: {realtime.phase}</Text>
         <Text style={styles.phase}>Audio SDK: {audioSdkEnabled ? '사용 중' : '사용하지 않음'}</Text>
+        <DenoiseStatus snapshot={realtime.denoise} audioSdkEnabled={audioSdkEnabled} />
         <VADStatus snapshot={realtime.vad} audioSdkEnabled={audioSdkEnabled} />
         {realtime.error ? <Text style={styles.error}>{realtime.error}</Text> : null}
         <TranslationList rows={realtime.rows} targetLanguage={targetLanguage} />

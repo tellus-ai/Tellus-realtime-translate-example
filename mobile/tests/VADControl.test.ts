@@ -5,6 +5,10 @@ import { VADToggle } from '../src/components/VADControl';
 import { TranslationExample } from '../src/components/TranslationExample';
 import { useRealtimeTranslation } from '../src/hooks/useRealtimeTranslation';
 
+function vadSwitch(renderer: ReactTestRenderer) {
+  return renderer.root.findAllByType(Switch).find((node) => node.props.accessibilityLabel === 'Voice Activity Detection')!;
+}
+
 const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 const previousActEnvironment = environment.IS_REACT_ACT_ENVIRONMENT;
 beforeAll(() => { environment.IS_REACT_ACT_ENVIRONMENT = true; });
@@ -16,21 +20,21 @@ describe('VAD switch availability', () => {
     const props = { enabled: true, disabled: false, audioSdkEnabled: false, onChange };
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(createElement(VADToggle, props)); });
-    expect(renderer.root.findByType(Switch).props.disabled).toBe(false);
-    expect(renderer.root.findByType(Switch).props.value).toBe(true);
-    await act(async () => { renderer.root.findByType(Switch).props.onValueChange(false); });
+    expect(vadSwitch(renderer).props.disabled).toBe(false);
+    expect(vadSwitch(renderer).props.value).toBe(true);
+    await act(async () => { vadSwitch(renderer).props.onValueChange(false); });
     expect(onChange).toHaveBeenCalledWith(false);
 
     await act(async () => { renderer.update(createElement(VADToggle, { ...props, audioSdkEnabled: true })); });
-    expect(renderer.root.findByType(Switch).props.disabled).toBe(true);
-    expect(renderer.root.findByType(Switch).props.value).toBe(false);
+    expect(vadSwitch(renderer).props.disabled).toBe(true);
+    expect(vadSwitch(renderer).props.value).toBe(false);
     onChange.mockClear();
-    await act(async () => { renderer.root.findByType(Switch).props.onValueChange(true); });
+    await act(async () => { vadSwitch(renderer).props.onValueChange(true); });
     expect(onChange).not.toHaveBeenCalled();
 
     await act(async () => { renderer.update(createElement(VADToggle, props)); });
-    expect(renderer.root.findByType(Switch).props.disabled).toBe(false);
-    await act(async () => { renderer.root.findByType(Switch).props.onValueChange(true); });
+    expect(vadSwitch(renderer).props.disabled).toBe(false);
+    await act(async () => { vadSwitch(renderer).props.onValueChange(true); });
     expect(onChange).toHaveBeenCalledWith(true);
     await act(async () => { renderer.unmount(); });
   });
@@ -46,9 +50,10 @@ const mockRealtime = jest.mocked(useRealtimeTranslation);
 function unpreparedSession(phase: 'idle' | 'ended' | 'error') {
   mockRealtime.mockReturnValue({
     phase, conversationId: null, audioSdkReady: false, rows: [], error: null,
+    denoise: { enabled: true, applied: null, updating: false, error: null },
     resultConnection: 'closed', audioConnection: 'closed',
     vad: { enabled: false, ready: false, mode: 'disabled', gate: 'closed' },
-    start: jest.fn(), pause: jest.fn(), resume: jest.fn(), stop: jest.fn(),
+    start: jest.fn(), pause: jest.fn(), resume: jest.fn(), stop: jest.fn(), setDenoiseEnabled: jest.fn(),
   });
 }
 
@@ -58,10 +63,10 @@ describe('SDK configuration locks the full screen independently of capture readi
     unpreparedSession(phase);
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(createElement(TranslationExample)); });
-    expect(renderer.root.findByType(Switch).props.disabled).toBe(true);
-    expect(renderer.root.findByType(Switch).props.value).toBe(false);
-    await act(async () => { renderer.root.findByType(Switch).props.onValueChange(true); });
-    expect(renderer.root.findByType(Switch).props.value).toBe(false);
+    expect(vadSwitch(renderer).props.disabled).toBe(true);
+    expect(vadSwitch(renderer).props.value).toBe(false);
+    await act(async () => { vadSwitch(renderer).props.onValueChange(true); });
+    expect(vadSwitch(renderer).props.value).toBe(false);
     await act(async () => { renderer.unmount(); });
   });
 
@@ -70,13 +75,13 @@ describe('SDK configuration locks the full screen independently of capture readi
     unpreparedSession('idle');
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(createElement(TranslationExample)); });
-    expect(renderer.root.findByType(Switch).props.disabled).toBe(false);
-    await act(async () => { renderer.root.findByType(Switch).props.onValueChange(true); });
-    expect(renderer.root.findByType(Switch).props.value).toBe(true);
+    expect(vadSwitch(renderer).props.disabled).toBe(false);
+    await act(async () => { vadSwitch(renderer).props.onValueChange(true); });
+    expect(vadSwitch(renderer).props.value).toBe(true);
     mockSdkEnabled = true;
     await act(async () => { renderer.update(createElement(TranslationExample)); });
-    expect(renderer.root.findByType(Switch).props.disabled).toBe(true);
-    expect(renderer.root.findByType(Switch).props.value).toBe(false);
+    expect(vadSwitch(renderer).props.disabled).toBe(true);
+    expect(vadSwitch(renderer).props.value).toBe(false);
     await act(async () => { renderer.unmount(); });
   });
 });

@@ -7,7 +7,7 @@ const LANGUAGE_TAG = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 
 export interface RealtimeIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>;
-  session: Pick<RealtimeTranslationSession, 'getSnapshot' | 'start' | 'pause' | 'resume' | 'stop'>;
+  session: Pick<RealtimeTranslationSession, 'getSnapshot' | 'start' | 'pause' | 'resume' | 'stop' | 'setDenoiseEnabled'>;
   isTrustedSender(event: IpcMainInvokeEvent): boolean;
 }
 
@@ -34,6 +34,11 @@ export function registerRealtimeIpc({ ipcMain, session, isTrustedSender }: Realt
   });
   handle('realtime:resume', async () => {
     await session.resume();
+    return null;
+  });
+  handle('realtime:set-denoise', async (enabled) => {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid denoise setting.');
+    await session.setDenoiseEnabled(enabled);
     return null;
   });
   handle('realtime:stop', async () => {

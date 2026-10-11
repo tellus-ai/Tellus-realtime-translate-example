@@ -31,6 +31,8 @@ function gate(): { opened: Promise<void>; open: () => void } {
 
 class FakeMicrophone implements MicrophoneRecorder {
   audioSdkReady = true;
+  denoiseEnabled = true;
+  async setDenoiseEnabled(enabled: boolean): Promise<boolean> { this.denoiseEnabled = enabled; return enabled; }
   prepareError: Error | null = null;
   capturing = false;
   startError: Error | null = null;
@@ -1221,5 +1223,61 @@ describe('disabled SDK configuration', () => {
     expect(prepare).not.toHaveBeenCalled();
     expect(server.requests).toEqual([]);
     expect(FakeSocket.instances).toEqual([]);
+  });
+});
+
+
+describe('Audio SDK denoise controls', () => {
+  it('uses a pre-start selection and changes denoise during recording without replacing sockets', async () => {
+    const { session, microphone } = createSession();
+    await session.setDenoiseEnabled(false);
+    expect(session.getSnapshot().denoise).toMatchObject({ enabled: false, applied: null });
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    expect(session.getSnapshot().denoise.applied).toBe(false);
+    await session.setDenoiseEnabled(true);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', denoise: { enabled: true, applied: true, updating: false, error: null } });
+    expect(microphone.capturing).toBe(true);
+    expect(socketKinds()).toEqual(['result', 'audio']);
+    expect(endRequests()).toHaveLength(0);
+    microphone.emit();
+    expect(latest().sent.some((frame) => typeof frame !== 'string')).toBe(true);
+  });
+
+  it('shows a rejected denoise change while keeping the last setting and translation running', async () => {
+    const { session, microphone } = await startSession();
+    const previous = session.getSnapshot().denoise.enabled;
+    jest.spyOn(microphone, 'setDenoiseEnabled').mockRejectedValueOnce(new Error('model_not_ready'));
+    await session.setDenoiseEnabled(!previous);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', error: null, denoise: {
+      enabled: previous, applied: previous, updating: false, error: 'Unable to change Audio SDK denoise: model_not_ready',
+    } });
+    expect(microphone.capturing).toBe(true);
+    expect(endRequests()).toHaveLength(0);
+  });
+
+  it('changes denoise while paused and preserves it for the next session', async () => {
+    const { session, microphone } = await startSession();
+    await session.pause();
+    await session.setDenoiseEnabled(true);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'paused', denoise: { enabled: true, applied: true } });
+    expect(microphone.capturing).toBe(false);
+    await session.stop();
+    expect(session.getSnapshot().denoise).toMatchObject({ enabled: true, applied: null });
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    expect(session.getSnapshot().denoise.applied).toBe(true);
+  });
+
+  it('waits for a pending setting before allowing Start', async () => {
+    const { session, microphone } = createSession();
+    const changing = gate();
+    microphone.setDenoiseEnabled = async (enabled) => { await changing.opened; microphone.denoiseEnabled = enabled; return enabled; };
+    const changed = session.setDenoiseEnabled(true);
+    await flush();
+    expect(session.getSnapshot().denoise.updating).toBe(true);
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    expect(server.requests).toHaveLength(0);
+    changing.open();
+    await changed;
+    expect(session.getSnapshot().denoise.updating).toBe(false);
   });
 });

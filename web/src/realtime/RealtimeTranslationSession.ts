@@ -47,6 +47,7 @@ export class RealtimeTranslationSession {
     audioConnection: 'closed',
     rows: [],
     audioSdkReady: false,
+    denoise: { enabled: false, applied: null, updating: false, error: null },
     vad: disabledVadSnapshot(false),
     error: null,
   };
@@ -79,7 +80,7 @@ export class RealtimeTranslationSession {
     private readonly endpoints: RealtimeEndpoints,
     private readonly microphone: MicrophoneRecorder,
     private readonly accessToken: string,
-  ) {}
+  ) { this.snapshot.denoise.enabled = microphone.denoiseEnabled; }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -90,11 +91,31 @@ export class RealtimeTranslationSession {
     return this.snapshot;
   }
 
+  setDenoiseEnabled(enabled: boolean): Promise<void> {
+    if (this.endpoints.audioSdkEnabled === false || this.snapshot.denoise.updating ||
+        !['idle', 'ended', 'error', 'recording', 'paused'].includes(this.snapshot.phase)) return Promise.resolve();
+    const generation = this.generation;
+    this.update({ denoise: { ...this.snapshot.denoise, updating: true, error: null } });
+    return this.enqueueLifecycle(async () => {
+      try {
+        const applied = await this.microphone.setDenoiseEnabled(enabled);
+        if (generation === this.generation) this.update({ denoise: {
+          enabled: applied, applied: this.snapshot.audioSdkReady ? applied : null, updating: false, error: null,
+        } });
+      } catch (error) {
+        if (generation === this.generation) this.update({ denoise: {
+          ...this.snapshot.denoise, updating: false,
+          error: `Unable to change Audio SDK denoise: ${error instanceof Error ? error.message : String(error)}`,
+        } });
+      }
+    });
+  }
+
   async start(input: StartConversationInput): Promise<void> {
     if (!this.accessToken) throw new Error('Set the API_KEY environment variable.');
     if (!input.sourceLanguage || !input.targetLanguage) throw new Error('Select two languages.');
     if (input.sourceLanguage === input.targetLanguage) throw new Error('Select two different languages.');
-    if (!['idle', 'ended', 'error'].includes(this.snapshot.phase)) return;
+    if (!['idle', 'ended', 'error'].includes(this.snapshot.phase) || this.snapshot.denoise.updating) return;
 
     const generation = ++this.generation;
     this.intentionalClose = false;
@@ -109,6 +130,7 @@ export class RealtimeTranslationSession {
       error: null,
       conversationId: null,
       audioSdkReady: false,
+      denoise: { ...this.snapshot.denoise, applied: null, error: null },
       vad: disabledVadSnapshot(true),
     });
     window.addEventListener('online', this.handleOnline);
@@ -119,7 +141,7 @@ export class RealtimeTranslationSession {
       await this.microphone.prepare(false);
       if (generation !== this.generation) return;
       if (!this.microphone.audioSdkReady) throw new Error('Audio SDK is required. Non-SDK audio capture is not supported.');
-      this.update({ phase: 'creating', audioSdkReady: true });
+      this.update({ phase: 'creating', audioSdkReady: true, denoise: { ...this.snapshot.denoise, applied: this.microphone.denoiseEnabled } });
 
       const conversationId = await createConversation(this.endpoints, this.accessToken);
       if (generation !== this.generation) {
@@ -568,7 +590,7 @@ export class RealtimeTranslationSession {
     this.closeSocket('audio');
     if (!keepResultSocket) this.closeSocket('result');
     await this.microphone.stop().catch(() => {});
-    this.update({ audioSdkReady: false });
+    this.update({ audioSdkReady: false, denoise: { ...this.snapshot.denoise, applied: null, updating: false } });
   }
 
   /** The server reported the end of the Conversation, so there is nothing left for `POST /end`. */

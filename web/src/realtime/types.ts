@@ -42,6 +42,13 @@ export type SessionPhase =
 
 export type ConnectionStatus = 'closed' | 'connecting' | 'open' | 'error';
 
+export interface DenoiseSnapshot {
+  enabled: boolean;
+  applied: boolean | null;
+  updating: boolean;
+  error: string | null;
+}
+
 export interface SessionSnapshot {
   phase: SessionPhase;
   conversationId: string | null;
@@ -49,6 +56,7 @@ export interface SessionSnapshot {
   audioConnection: ConnectionStatus;
   rows: TranslationRow[];
   audioSdkReady: boolean;
+  denoise: DenoiseSnapshot;
   vad: ClientVadSnapshot;
   error: string | null;
 }

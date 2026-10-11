@@ -34,9 +34,10 @@ vi.mock('../src/config/realtimeSpeechConfig', () => ({
 vi.mock('../src/hooks/useRealtimeTranslation', () => ({
   useRealtimeTranslation: () => ({
     phase: screen.phase, audioSdkReady: false, rows: [], error: null,
+    denoise: { enabled: false, applied: null, updating: false, error: null },
     resultConnection: 'closed', audioConnection: 'closed',
     vad: { enabled: false, ready: false, mode: 'disabled', gate: 'closed', level: 'off' },
-    start() {}, pause() {}, resume() {}, stop() {},
+    start() {}, pause() {}, resume() {}, stop() {}, setDenoiseEnabled() {},
   }),
 }));
 

@@ -21,6 +21,12 @@ export interface TranslationRow {
 
 export type SessionPhase = 'idle' | 'creating' | 'configuring' | 'connecting' | 'recording' | 'paused' | 'reconnecting' | 'stopping' | 'ended' | 'error';
 export type ConnectionStatus = 'closed' | 'connecting' | 'open' | 'error';
+export interface DenoiseSnapshot {
+  enabled: boolean;
+  applied: boolean | null;
+  updating: boolean;
+  error: string | null;
+}
 export interface SessionSnapshot {
   phase: SessionPhase;
   conversationId: string | null;
@@ -28,6 +34,7 @@ export interface SessionSnapshot {
   audioConnection: ConnectionStatus;
   rows: TranslationRow[];
   audioSdkReady: boolean;
+  denoise: DenoiseSnapshot;
   error: string | null;
   vad: VadSnapshot;
 }

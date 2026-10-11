@@ -32,7 +32,7 @@ type NativeWebSocketConstructor = new (
 interface PendingOpen { timeout: Timer; resolve(usable: boolean): void }
 
 export class RealtimeTranslationSession {
-  private snapshot: SessionSnapshot = { phase: 'idle', conversationId: null, resultConnection: 'closed', audioConnection: 'closed', rows: [], audioSdkReady: false, error: null, vad: DISABLED_VAD_SNAPSHOT };
+  private snapshot: SessionSnapshot = { phase: 'idle', conversationId: null, resultConnection: 'closed', audioConnection: 'closed', rows: [], audioSdkReady: false, denoise: { enabled: true, applied: null, updating: false, error: null }, error: null, vad: DISABLED_VAD_SNAPSHOT };
   private listeners = new Set<Listener>();
   private sockets: Record<RealtimeSocket, WebSocket | null> = { result: null, audio: null };
   // The server explains an error close with a `system.error` just before it.
@@ -62,7 +62,7 @@ export class RealtimeTranslationSession {
     private readonly endpoints: RealtimeEndpoints,
     private readonly microphone: MicrophoneRecorder,
     private readonly accessToken: string,
-  ) {}
+  ) { this.snapshot.denoise.enabled = microphone.denoiseEnabled; }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -70,11 +70,31 @@ export class RealtimeTranslationSession {
   }
   getSnapshot(): SessionSnapshot { return this.snapshot; }
 
+  setDenoiseEnabled(enabled: boolean): Promise<void> {
+    if (this.endpoints.audioSdkEnabled === false || this.snapshot.denoise.updating ||
+        !['idle', 'ended', 'error', 'recording', 'paused'].includes(this.snapshot.phase)) return Promise.resolve();
+    const generation = this.generation;
+    this.update({ denoise: { ...this.snapshot.denoise, updating: true, error: null } });
+    return this.enqueueLifecycle(async () => {
+      try {
+        const applied = await this.microphone.setDenoiseEnabled(enabled);
+        if (generation === this.generation) this.update({ denoise: {
+          enabled: applied, applied: this.snapshot.audioSdkReady ? applied : null, updating: false, error: null,
+        } });
+      } catch (error) {
+        if (generation === this.generation) this.update({ denoise: {
+          ...this.snapshot.denoise, updating: false,
+          error: `Unable to change Audio SDK denoise: ${error instanceof Error ? error.message : String(error)}`,
+        } });
+      }
+    });
+  }
+
   async start(input: StartConversationInput): Promise<void> {
     if (!this.accessToken) throw new Error('Set the API_KEY environment variable.');
     if (!input.sourceLanguage || !input.targetLanguage) throw new Error('Select two languages.');
     if (input.sourceLanguage === input.targetLanguage) throw new Error('Select two different languages.');
-    if (!['idle', 'ended', 'error'].includes(this.snapshot.phase)) return;
+    if (!['idle', 'ended', 'error'].includes(this.snapshot.phase) || this.snapshot.denoise.updating) return;
     const generation = ++this.generation;
     this.intentionalClose = false;
     this.reconnectAttempt = 0;
@@ -89,6 +109,7 @@ export class RealtimeTranslationSession {
       error: null,
       conversationId: null,
       audioSdkReady: false,
+      denoise: { ...this.snapshot.denoise, applied: null, error: null },
       vad: DISABLED_VAD_SNAPSHOT,
     });
     try {
@@ -96,7 +117,7 @@ export class RealtimeTranslationSession {
       await this.microphone.prepare(false);
       if (generation !== this.generation) return;
       if (!this.microphone.audioSdkReady) throw new Error('Audio SDK is required. Non-SDK audio capture is not supported.');
-      this.update({ audioSdkReady: true });
+      this.update({ audioSdkReady: true, denoise: { ...this.snapshot.denoise, applied: this.microphone.denoiseEnabled } });
       const conversationId = await createConversation(this.endpoints, this.accessToken);
       if (generation !== this.generation) {
         await endConversation(this.endpoints, this.accessToken, conversationId).catch(() => {});
@@ -203,7 +224,7 @@ export class RealtimeTranslationSession {
     this.intentionalClose = true;
     this.update({ phase: 'stopping' });
     await this.microphone.stop().catch(() => {});
-    this.update({ audioSdkReady: false });
+    this.update({ audioSdkReady: false, denoise: { ...this.snapshot.denoise, applied: null, updating: false } });
     this.acceptingAudio = false;
     if (this.clientVad) this.closeOpenVadGate('capturing');
     this.sendAudioStatus('idle');

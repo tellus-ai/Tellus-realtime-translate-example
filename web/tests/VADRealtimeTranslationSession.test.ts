@@ -5,6 +5,8 @@ import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationS
 
 class FakeMicrophone implements MicrophoneRecorder {
   audioSdkReady = true;
+  denoiseEnabled = false;
+  async setDenoiseEnabled(enabled: boolean): Promise<boolean> { this.denoiseEnabled = enabled; return enabled; }
   preparedVad?: boolean;
   authorization: Promise<void> = Promise.resolve();
   started = false;

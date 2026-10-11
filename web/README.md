@@ -65,6 +65,8 @@ Silero 기본 positive/negative threshold는 `0.5` / `0.35`, silence는 `550 ms`
 
 관련 공식 문서: [AudioWorklet 입력 프레임](https://developer.mozilla.org/en-US/docs/Web/API/AudioWorkletProcessor/process), [ORT WASM 환경 설정](https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html), [Emscripten Asyncify](https://emscripten.org/docs/porting/asyncify.html).
 
+**Noise Reduction (Denoise)** 스위치로 Start 전과 녹음·일시정지 중에 SDK FastEnhancer를 켜고 끌 수 있습니다. 기본값은 꺼짐이며 `VITE_TELLUS_DENOISE=true`로 초기값을 켤 수 있습니다. `setDenoiseEnabled()` 적용 후 `getStatus()`로 확인한 값을 **Audio SDK denoise**에 표시합니다. 시작 전에는 선택값을 별도로 표시하며, Stop 후 다음 세션에도 선택값을 유지합니다. 적용 실패는 번역을 종료하지 않고 오류로 표시합니다.
+
 ## Error Handling and Reconnects
 
 The session follows

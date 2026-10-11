@@ -27,6 +27,7 @@ export function useRealtimeTranslation() {
     start: useCallback((input: StartConversationInput) => session.start(input), [session]),
     pause: useCallback(() => session.pause(), [session]),
     resume: useCallback(() => session.resume(), [session]),
+    setDenoiseEnabled: useCallback((enabled: boolean) => session.setDenoiseEnabled(enabled), [session]),
     stop: useCallback(() => session.stop(), [session]),
   };
 }

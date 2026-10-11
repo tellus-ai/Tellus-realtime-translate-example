@@ -38,7 +38,7 @@ class FakeCapture implements MicrophoneCapture {
   expired = false;
   sequence = 0;
   startError: Error | null = null;
-  status: CaptureVadStatus = { vadReady: true, vadGateState: 'closed', vadProbability: 0, vadIsSpeech: false };
+  status: CaptureVadStatus = { denoiseActive: false, vadReady: true, vadGateState: 'closed', vadProbability: 0, vadIsSpeech: false };
   private chunkCallback: ((error: Error | null, chunk: CapturedAudioChunk) => unknown) | null = null;
   private errorCallback: ((error: Error | null, detail: { message: string; recoverable: boolean }) => unknown) | null = null;
   private nextPayload = 1;
@@ -88,7 +88,7 @@ class FakeCapture implements MicrophoneCapture {
   emit(gateEvent?: 'speech_gate_opened' | 'speech_gate_closed'): void {
     if (gateEvent) {
       const open = gateEvent === 'speech_gate_opened';
-      this.status = { vadReady: true, vadGateState: open ? 'open' : 'closed', vadProbability: open ? 0.9 : 0.1, vadIsSpeech: open };
+      this.status = { ...this.status, vadReady: true, vadGateState: open ? 'open' : 'closed', vadProbability: open ? 0.9 : 0.1, vadIsSpeech: open };
     }
     this.chunkCallback?.(null, {
       data: { microphone: new Uint8Array([this.nextPayload++]) },
@@ -202,6 +202,10 @@ class FakeSocket implements RealtimeWebSocket {
     if (typeof data === 'string') {
       const message = JSON.parse(data) as AuthorizationRequest;
       if (['audio.authenticate', 'engine.renew'].includes(message.type)) {
+        // The real server permits only one initial authentication on each Audio socket.
+        if (message.type === 'audio.authenticate' && this.authorizationRequests.length > 0) {
+          throw new Error('engine_request_replayed');
+        }
         this.authorizationRequests.push(message);
         queueMicrotask(() => FakeSocket.onAuthorize(this));
         return;
@@ -299,7 +303,7 @@ function createSession(getAccessToken: () => string = () => 'login-token') {
   const session = new RealtimeTranslationSession(
     { websocketBaseUrl: 'wss://example.test' },
     createRealtimeApi({ httpBaseUrl: HTTP_BASE_URL, accessToken: 'token' }, fakeFetch),
-    async () => capture,
+    async (denoiseEnabled) => { capture.status.denoiseActive = denoiseEnabled; return capture; },
     getAccessToken,
     (url) => new FakeSocket(url),
   );
@@ -1489,5 +1493,273 @@ describe('disabled SDK configuration', () => {
     expect(createCapture).not.toHaveBeenCalled();
     expect(server.requests).toEqual([]);
     expect(FakeSocket.instances).toEqual([]);
+  });
+});
+
+
+describe('desktop SDK denoise selection', () => {
+  function createDenoiseSession() {
+    const captures: FakeCapture[] = [];
+    const createCapture = vi.fn(async (enabled: boolean) => {
+      const capture = new FakeCapture();
+      capture.status.denoiseActive = enabled;
+      captures.push(capture);
+      return capture;
+    });
+    const session = new RealtimeTranslationSession(
+      { websocketBaseUrl: 'wss://example.test' },
+      createRealtimeApi({ httpBaseUrl: HTTP_BASE_URL, accessToken: 'token' }, fakeFetch),
+      createCapture,
+      () => 'login-token',
+      (url) => new FakeSocket(url),
+    );
+    return { session, captures, createCapture };
+  }
+
+  it('applies the selected setting when creating capture and reads the native denoise state', async () => {
+    const { session } = createSession();
+    await session.setDenoiseEnabled(true);
+    expect(session.getSnapshot().denoise).toMatchObject({ enabled: true, applied: null });
+    await session.start(input);
+    expect(session.getSnapshot().denoise).toMatchObject({ enabled: true, applied: true });
+    await session.stop();
+    await session.setDenoiseEnabled(false);
+    await session.start(input);
+    expect(session.getSnapshot().denoise).toMatchObject({ enabled: false, applied: false });
+  });
+
+  it('changes denoise both ways while retaining the conversation, Result, and transcript', async () => {
+    const { session, captures, createCapture } = createDenoiseSession();
+    await session.start(input);
+    const [resultSocket, originalAudio] = FakeSocket.instances;
+    resultSocket!.receive(result('transcript.final', 1, 'hello'));
+    resultSocket!.receive(result('translation.final', 1, '안녕하세요', 'en-US'));
+    const rows = session.getSnapshot().rows;
+    captures[0]!.emit();
+
+    await session.setDenoiseEnabled(true);
+    const enabledAudio = latest();
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'recording', conversationId: 'conversation-1', resultConnection: 'open',
+      denoise: { enabled: true, applied: true, updating: false, error: null },
+    });
+    expect(session.getSnapshot().rows).toBe(rows);
+    expect(captures[0]).toMatchObject({ stopped: true, authorized: false });
+    expect(captures[1]).toMatchObject({ capturing: true, authorized: true, vadEnabled: false });
+    expect(originalAudio!.readyState).toBe(FakeSocket.CLOSED);
+    expect(enabledAudio.authorizationRequests).toHaveLength(1);
+    expect(readStatus(enabledAudio.sent[0])).toMatchObject({ boundary_sample: 0, mic: { state: 'capturing' } });
+    captures[0]!.emit();
+    captures[0]!.fail('late error from replaced capture');
+    expect(frames(enabledAudio)).toEqual([]);
+    captures[1]!.emit();
+    expect(frames(enabledAudio)).toHaveLength(1);
+
+    await session.setDenoiseEnabled(false);
+    expect(session.getSnapshot().denoise).toMatchObject({ enabled: false, applied: false, error: null });
+    expect(createCapture.mock.calls).toEqual([[false], [true], [false]]);
+    expect(socketKinds()).toEqual(['result', 'audio', 'audio', 'audio']);
+    expect(resultSocket!.readyState).toBe(FakeSocket.OPEN);
+    expect(server.requests.filter((request) => request === 'POST /conversations')).toHaveLength(1);
+    expect(endRequests()).toEqual([]);
+    await session.stop();
+  });
+
+  it('preserves paused state and starts the authorized replacement only on Resume', async () => {
+    const { session, captures } = createDenoiseSession();
+    await session.start(input);
+    await session.pause();
+    await session.setDenoiseEnabled(true);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'paused', denoise: { enabled: true, applied: true } });
+    expect(captures[1]).toMatchObject({ capturing: false, authorized: true, started: false });
+    expect(readStatus(latest().sent[0])).toMatchObject({ mic: { state: 'paused' } });
+    await session.resume();
+    expect(captures[1]!.capturing).toBe(true);
+    captures[1]!.emit();
+    expect(frames(latest())).toHaveLength(1);
+    await session.stop();
+  });
+
+  it('restores the previous capture setting and keeps recording when initialization fails', async () => {
+    const { session, captures, createCapture } = createDenoiseSession();
+    await session.start(input);
+    const resultSocket = FakeSocket.instances[0]!;
+    createCapture.mockRejectedValueOnce(new Error('denoise model unavailable'));
+    await session.setDenoiseEnabled(true);
+    expect(createCapture.mock.calls).toEqual([[false], [true], [false]]);
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'recording', error: null,
+      denoise: { enabled: false, applied: false, updating: false, error: 'Unable to change Audio SDK denoise: denoise model unavailable' },
+    });
+    expect(captures.at(-1)!.capturing).toBe(true);
+    expect(resultSocket.readyState).toBe(FakeSocket.OPEN);
+    expect(endRequests()).toEqual([]);
+    await session.setDenoiseEnabled(true);
+    expect(session.getSnapshot().denoise).toMatchObject({ enabled: true, applied: true, error: null });
+    await session.stop();
+  });
+
+  it('restores the previous setting if the replacement fails to start', async () => {
+    const { session, captures, createCapture } = createDenoiseSession();
+    await session.start(input);
+    const replacement = new FakeCapture();
+    replacement.status.denoiseActive = true;
+    replacement.startError = new Error('replacement device unavailable');
+    createCapture.mockResolvedValueOnce(replacement);
+    await session.setDenoiseEnabled(true);
+    expect(replacement.stopped).toBe(true);
+    expect(captures.at(-1)!.capturing).toBe(true);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', denoise: { enabled: false, applied: false } });
+    expect(session.getSnapshot().denoise.error).toContain('replacement device unavailable');
+    await session.stop();
+  });
+
+  it('keeps the previous paused setting on failure and verifies the SDK applied flag', async () => {
+    const { session, captures, createCapture } = createDenoiseSession();
+    await session.start(input);
+    await session.pause();
+    const replacement = new FakeCapture();
+    createCapture.mockResolvedValueOnce(replacement);
+    await session.setDenoiseEnabled(true);
+    expect(replacement.stopped).toBe(true);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'paused', denoise: { enabled: false, applied: false, updating: false } });
+    expect(session.getSnapshot().denoise.error).toContain('did not apply');
+    expect(captures.at(-1)!.started).toBe(false);
+    await session.stop();
+  });
+
+  it('reports both errors and ends the conversation if capture recovery also fails', async () => {
+    const { session, createCapture } = createDenoiseSession();
+    await session.start(input);
+    createCapture.mockRejectedValueOnce(new Error('model unavailable')).mockRejectedValueOnce(new Error('microphone unavailable'));
+    await session.setDenoiseEnabled(true);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', denoise: { enabled: false, applied: null, updating: false } });
+    expect(session.getSnapshot().error).toContain('model unavailable');
+    expect(session.getSnapshot().error).toContain('Audio capture recovery failed: microphone unavailable');
+    expect(endRequests()).toHaveLength(1);
+    await session.stop();
+  });
+
+  it('waits for approval and ignores duplicate changes or Start during replacement', async () => {
+    const { session, captures, createCapture } = createDenoiseSession();
+    await session.start(input);
+    FakeSocket.onAuthorize = () => {};
+    const changing = session.setDenoiseEnabled(true);
+    expect(session.getSnapshot().denoise.updating).toBe(true);
+    await flush();
+    expect(captures[1]!.started).toBe(false);
+    expect(latest().sent).toEqual([]);
+    await session.setDenoiseEnabled(false);
+    await session.start(input);
+    expect(createCapture).toHaveBeenCalledTimes(2);
+    latest().authorize();
+    await changing;
+    expect(captures[1]!.capturing).toBe(true);
+    expect(session.getSnapshot().denoise).toMatchObject({ enabled: true, applied: true, updating: false });
+    await session.stop();
+  });
+
+  it('releases a late replacement without reopening Audio when the server ends the conversation', async () => {
+    const { session, createCapture } = createDenoiseSession();
+    await session.start(input);
+    let complete!: (capture: FakeCapture) => void;
+    createCapture.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    const changing = session.setDenoiseEnabled(true);
+    await flush();
+    FakeSocket.instances[0]!.receive({ type: 'conversation.ended', data: {} });
+    const replacement = new FakeCapture();
+    replacement.status.denoiseActive = true;
+    complete(replacement);
+    await changing;
+    expect(replacement.stopped).toBe(true);
+    expect(replacement.started).toBe(false);
+    expect(socketKinds()).toEqual(['result', 'audio']);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'ended', denoise: { enabled: false, applied: null, updating: false } });
+    expect(endRequests()).toEqual([]);
+  });
+
+  it('cancels pending replacement approval on Stop without starting the new capture', async () => {
+    const { session, captures } = createDenoiseSession();
+    await session.start(input);
+    FakeSocket.onAuthorize = () => {};
+    const changing = session.setDenoiseEnabled(true);
+    await flush();
+    const stopping = session.stop({ waitForResults: false });
+    await Promise.all([changing, stopping]);
+    expect(captures[1]!.started).toBe(false);
+    expect(captures.every((capture) => capture.stopped)).toBe(true);
+    expect(FakeSocket.instances.every((socket) => socket.readyState === FakeSocket.CLOSED)).toBe(true);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'ended', denoise: { updating: false, applied: null } });
+    expect(endRequests()).toHaveLength(1);
+  });
+
+  it('retains the authorization denial and does not retry with the previous setting', async () => {
+    const { session, captures, createCapture } = createDenoiseSession();
+    await session.start(input);
+    FakeSocket.onAuthorize = (socket) => socket.refuse(1008, 'engine_authentication_failed', 'The login token is not valid.');
+    await session.setDenoiseEnabled(true);
+    expect(createCapture).toHaveBeenCalledTimes(2);
+    expect(captures[1]!.stopped).toBe(true);
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'error', error: 'The login token is not valid. (engine_authentication_failed)',
+      denoise: { applied: null, updating: false },
+    });
+    await session.stop();
+  });
+
+  it('restores capture after a temporary Audio refusal without leaving a reconnect timer behind', async () => {
+    const { session, captures } = createDenoiseSession();
+    await session.start(input);
+    let refusals = 1;
+    FakeSocket.onAuthorize = (socket) => {
+      if (refusals-- > 0) socket.refuse(1013, 'engine_authorization_unavailable', 'Try again.');
+      else socket.authorize();
+    };
+    await session.setDenoiseEnabled(true);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', denoise: { enabled: false, applied: false, updating: false } });
+    expect(session.getSnapshot().denoise.error).toContain('could not be authorized');
+    expect(captures.at(-1)!.capturing).toBe(true);
+    const sockets = FakeSocket.instances.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(FakeSocket.instances).toHaveLength(sockets);
+    await session.stop();
+  });
+
+  it('serializes a Result reconnect with pending capture replacement', async () => {
+    const { session, createCapture } = createDenoiseSession();
+    await session.start(input);
+    let complete!: (capture: FakeCapture) => void;
+    createCapture.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    const changing = session.setDenoiseEnabled(true);
+    await flush();
+    FakeSocket.instances[0]!.serverClose(1013, 'result_send_failed');
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(socketKinds()).toEqual(['result', 'audio']);
+    const replacement = new FakeCapture();
+    replacement.status.denoiseActive = true;
+    complete(replacement);
+    await changing;
+    await flush();
+    expect(socketKinds()).toEqual(['result', 'audio', 'audio', 'result']);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', resultConnection: 'open', denoise: { enabled: true } });
+    expect(replacement.capturing).toBe(true);
+    await session.stop();
+  });
+
+  it('keeps a pending Result reconnect when capture replacement rolls back', async () => {
+    const { session, createCapture } = createDenoiseSession();
+    await session.start(input);
+    let rejectReplacement!: (error: Error) => void;
+    createCapture.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectReplacement = reject; }));
+    const changing = session.setDenoiseEnabled(true);
+    await flush();
+    FakeSocket.instances[0]!.serverClose(1013, 'result_send_failed');
+    rejectReplacement(new Error('model unavailable'));
+    await changing;
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', resultConnection: 'closed', denoise: { enabled: false } });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(socketKinds()).toEqual(['result', 'audio', 'audio', 'result']);
+    expect(session.getSnapshot().resultConnection).toBe('open');
+    await session.stop();
   });
 });

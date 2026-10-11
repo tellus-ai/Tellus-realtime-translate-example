@@ -11,34 +11,28 @@ const AUDIO_CAPTURE_CONFIG: AudioCaptureConfig = {
   transport: { codec: 'opus', bitrateBps: 64_000 },
 };
 
-let enginePromise: Promise<AudioEngine> | null = null;
-
 /**
- * Loads the native engine once with client VAD disabled. The SDK is imported lazily so a missing
+ * Prepares native models for each new capture with client VAD disabled. The SDK is imported lazily so a missing
  * native binary surfaces as a session error instead of crashing the main process at startup.
  */
-export function initializeAudioEngine(): Promise<AudioEngine> {
-  if (!enginePromise) {
-    const promise = import('@tellus-ai/audio-sdk-desktop')
-      .then(({ AudioEngine }) => AudioEngine.init(AUDIO_CAPTURE_CONFIG))
-      .catch((error: unknown) => {
-        throw new Error(`Audio SDK is required but could not be initialized: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    enginePromise = promise;
-    promise.catch(() => {
-      if (enginePromise === promise) enginePromise = null;
+export function initializeAudioEngine(denoiseEnabled = false): Promise<AudioEngine> {
+  // Captures consume the preloaded native model instances. Re-initialize even when returning
+  // to a previous setting so replacement/rollback capture starts with prepared models.
+  return import('@tellus-ai/audio-sdk-desktop')
+    .then(({ AudioEngine }) => AudioEngine.init({ ...AUDIO_CAPTURE_CONFIG, denoiseEnabled }))
+    .catch((error: unknown) => {
+      throw new Error(`Audio SDK is required but could not be initialized: ${error instanceof Error ? error.message : String(error)}`);
     });
-  }
-  return enginePromise;
 }
 
 export async function createMicrophoneCapture(
   requestMicrophoneAccess: () => Promise<boolean>,
+  denoiseEnabled = false,
 ): Promise<MicrophoneCapture> {
   if (!(await requestMicrophoneAccess())) {
     throw new Error('Microphone access is denied. Allow it in System Settings > Privacy & Security > Microphone.');
   }
-  const engine = await initializeAudioEngine();
+  const engine = await initializeAudioEngine(denoiseEnabled);
   if (!engine.getStatus().initialized) throw new Error('Audio SDK is required but is not initialized.');
   return Object.assign(engine.createCapture(), { audioSdkReady: true });
 }

@@ -4,6 +4,7 @@ import { useRealtimeTranslation } from '../hooks/useRealtimeTranslation';
 import { ConnectionStatus } from './ConnectionStatus';
 import { TranslationPanels } from './TranslationPanels';
 import { VADStatus, VADToggle } from './VADControl';
+import { DenoiseStatus, DenoiseToggle } from './DenoiseControl';
 
 const LANGUAGES = [
   ['ko-KR', '한국어 (Korean)'],
@@ -47,6 +48,8 @@ export function TranslationExample() {
           </select>
         </label>
         <VADToggle enabled={clientVad} disabled={active} audioSdkEnabled={audioSdkEnabled} onChange={setVadSelected} />
+        <DenoiseToggle snapshot={realtime.denoise} disabled={busy || realtime.phase === 'reconnecting'} audioSdkEnabled={audioSdkEnabled}
+          onChange={(enabled) => void realtime.setDenoiseEnabled(enabled)} />
         <label>
           Target Language
           <select value={targetLanguage} disabled={active} onChange={(event) => setTargetLanguage(event.target.value)}>
@@ -56,7 +59,7 @@ export function TranslationExample() {
       </section>
 
       <section className="control-panel">
-        <button disabled={active || !tokenConfigured} onClick={() => void realtime.start({ sourceLanguage, targetLanguage, clientVad })}>
+        <button disabled={active || !tokenConfigured || realtime.denoise.updating} onClick={() => void realtime.start({ sourceLanguage, targetLanguage, clientVad })}>
           Start
         </button>
         {realtime.phase === 'recording' ? (
@@ -70,6 +73,7 @@ export function TranslationExample() {
       <ConnectionStatus result={realtime.resultConnection} audio={realtime.audioConnection} />
       <p className="phase">Status: {realtime.phase}</p>
       <p className="phase">Audio SDK: {audioSdkEnabled ? '사용 중' : '사용하지 않음'}</p>
+      <DenoiseStatus snapshot={realtime.denoise} audioSdkEnabled={audioSdkEnabled} />
       <VADStatus snapshot={realtime.vad} audioSdkEnabled={audioSdkEnabled} />
       {realtime.error && <p className="error" role="alert">{realtime.error}</p>}
       <TranslationPanels rows={realtime.rows} targetLanguage={targetLanguage} />

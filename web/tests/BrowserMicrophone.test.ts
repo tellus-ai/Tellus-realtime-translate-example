@@ -3,7 +3,7 @@ import { BrowserMicrophone } from '../src/audio/BrowserMicrophone';
 
 const sdk = vi.hoisted(() => ({
   init: vi.fn(),
-  capture: { stop: vi.fn() },
+  capture: { stop: vi.fn(), getStatus: vi.fn(), setDenoiseEnabled: vi.fn() },
   engine: { createCapture: vi.fn(), dispose: vi.fn() },
 }));
 vi.mock('@tellus-ai/audio-sdk-web', () => ({ AudioEngine: { init: sdk.init } }));
@@ -13,6 +13,37 @@ beforeEach(() => {
   vi.stubGlobal('document', { baseURI: 'https://example.test/' });
   sdk.init.mockResolvedValue(sdk.engine);
   sdk.engine.createCapture.mockReturnValue(sdk.capture);
+  sdk.capture.getStatus.mockResolvedValue({ state: 'stopped', denoiseEnabled: false });
+});
+
+describe('browser SDK denoise', () => {
+  it('applies a pre-start selection instead of the environment default', async () => {
+    const microphone = new BrowserMicrophone();
+    await microphone.setDenoiseEnabled(true);
+    sdk.capture.getStatus.mockResolvedValue({ state: 'stopped', denoiseEnabled: true });
+    await microphone.prepare(false);
+    expect(sdk.init).toHaveBeenCalledWith(expect.objectContaining({ denoiseEnabled: true }), expect.anything());
+    expect(microphone.denoiseEnabled).toBe(true);
+  });
+
+  it('changes the existing SDK capture and reads its applied state without restarting it', async () => {
+    const microphone = new BrowserMicrophone();
+    await microphone.prepare(false);
+    sdk.capture.getStatus.mockResolvedValue({ state: 'running', denoiseEnabled: true });
+    await expect(microphone.setDenoiseEnabled(true)).resolves.toBe(true);
+    expect(sdk.capture.setDenoiseEnabled).toHaveBeenCalledWith(true);
+    expect(microphone.denoiseEnabled).toBe(true);
+    expect(sdk.init).toHaveBeenCalledOnce();
+    expect(sdk.engine.dispose).not.toHaveBeenCalled();
+  });
+
+  it('keeps the last setting when the SDK rejects the change', async () => {
+    const microphone = new BrowserMicrophone();
+    await microphone.prepare(false);
+    sdk.capture.setDenoiseEnabled.mockRejectedValueOnce(new Error('model_not_ready'));
+    await expect(microphone.setDenoiseEnabled(true)).rejects.toThrow('model_not_ready');
+    expect(microphone.denoiseEnabled).toBe(false);
+  });
 });
 afterEach(() => vi.unstubAllGlobals());
 

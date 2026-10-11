@@ -79,7 +79,15 @@ The main process owns the whole session; the renderer only draws it.
 - **Audio SDK.** `AudioEngine.init()` runs at app start with client VAD disabled. Each session requires
   SDK capture with 16 kHz, 20 ms Opus frames at 64 kbps. The UI shows **Audio SDK: 사용 중 / 사용하지 않음**
   from the configured audio processing mode, independently of capture readiness. Missing or failed SDK initialization is a session error before a
-  Conversation is created. Denoise is off, matching the Tellus desktop app default.
+  Conversation is created. Denoise defaults to off, matching the Tellus desktop app default.
+- **Denoise control.** Change **Noise Reduction (Denoise)** before Start, while recording, or while
+  paused. The selection is passed to `AudioEngine.init()` and retained between sessions.
+  Since the desktop SDK configures denoise when creating capture, a live change replaces capture
+  and reopens only Audio to authorize the new native instance. The Conversation, Result connection,
+  transcript, and paused state are preserved; audio briefly pauses during the change. If capture
+  reconfiguration fails, the previous setting is restored, and the UI displays the error.
+  **Audio SDK denoise** shows the native capture's `denoiseActive` value; before Start it shows the
+  selected value separately.
 - **Execution authorization.** Before capture starts, `attachEngineAuthorization()` sends
   `audio.authenticate` on the Audio WebSocket and waits for the native engine to accept the signed
   permit. It sends `engine.renew` at most eight minutes apart, including while paused. Closing the

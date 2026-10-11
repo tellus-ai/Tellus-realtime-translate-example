@@ -82,7 +82,7 @@ function startApp(): void {
   realtimeSession = new RealtimeTranslationSession(
     { websocketBaseUrl: config.websocketBaseUrl, audioSdkEnabled: config.audioSdkEnabled },
     api,
-    () => createMicrophoneCapture(requestMicrophoneAccess),
+    (denoiseEnabled) => createMicrophoneCapture(requestMicrophoneAccess, denoiseEnabled),
     getAccessToken,
   );
   realtimeSession.subscribe((snapshot) => {

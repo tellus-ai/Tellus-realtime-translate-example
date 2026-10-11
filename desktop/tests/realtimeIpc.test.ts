@@ -13,6 +13,7 @@ function setup({ trusted = true } = {}) {
     pause: vi.fn(async () => {}),
     resume: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
+    setDenoiseEnabled: vi.fn(async () => {}),
   };
   registerRealtimeIpc({
     ipcMain: { handle: (channel, handler) => handlers.set(channel, handler as Handler) },
@@ -33,11 +34,13 @@ describe('registerRealtimeIpc', () => {
     await invoke('realtime:pause');
     await invoke('realtime:resume');
     await invoke('realtime:stop');
+    await invoke('realtime:set-denoise', true);
 
     expect(session.start).toHaveBeenCalledWith(input);
     expect(session.pause).toHaveBeenCalledOnce();
     expect(session.resume).toHaveBeenCalledOnce();
     expect(session.stop).toHaveBeenCalledOnce();
+    expect(session.setDenoiseEnabled).toHaveBeenCalledWith(true);
   });
 
   it('blocks untrusted senders before touching the session', async () => {
@@ -58,5 +61,19 @@ describe('registerRealtimeIpc', () => {
     })).resolves.toMatchObject({ ok: false, error: { message: 'Invalid interpretation settings.' } });
     await expect(invoke('realtime:start', null)).resolves.toMatchObject({ ok: false });
     expect(session.start).not.toHaveBeenCalled();
+  });
+
+  it.each([null, 'true', 1, {}])('rejects invalid denoise settings: %j', async (enabled) => {
+    const { session, invoke } = setup();
+    await expect(invoke('realtime:set-denoise', enabled)).resolves.toMatchObject({
+      ok: false, error: { message: 'Invalid denoise setting.' },
+    });
+    expect(session.setDenoiseEnabled).not.toHaveBeenCalled();
+  });
+
+  it('blocks denoise changes from untrusted senders', async () => {
+    const { session, invoke } = setup({ trusted: false });
+    await expect(invoke('realtime:set-denoise', true)).resolves.toMatchObject({ ok: false });
+    expect(session.setDenoiseEnabled).not.toHaveBeenCalled();
   });
 });

@@ -8,6 +8,7 @@ export type DesktopIpcChannel =
   | 'realtime:start'
   | 'realtime:pause'
   | 'realtime:resume'
+  | 'realtime:set-denoise'
   | 'realtime:stop';
 
 /** Pushed from main to the renderer whenever the session snapshot changes. */
@@ -43,5 +44,6 @@ export interface TellusDesktopApi {
   start(input: StartConversationInput): Promise<DesktopResult<null>>;
   pause(): Promise<DesktopResult<null>>;
   resume(): Promise<DesktopResult<null>>;
+  setDenoiseEnabled(enabled: boolean): Promise<DesktopResult<null>>;
   stop(): Promise<DesktopResult<null>>;
 }

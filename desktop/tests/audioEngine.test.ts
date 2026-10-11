@@ -22,6 +22,18 @@ describe('required desktop Audio SDK', () => {
     expect(capture.audioSdkReady).toBe(true);
   });
 
+  it('prepares models for each capture, including when returning to an earlier denoise setting', async () => {
+    const { createMicrophoneCapture } = await import('../electron/audio/audioEngine');
+    await createMicrophoneCapture(async () => true, false);
+    await createMicrophoneCapture(async () => true, true);
+    await createMicrophoneCapture(async () => true, false);
+    expect(sdk.init).toHaveBeenNthCalledWith(1, expect.objectContaining({ denoiseEnabled: false }));
+    expect(sdk.init).toHaveBeenNthCalledWith(2, expect.objectContaining({ denoiseEnabled: true }));
+    expect(sdk.init).toHaveBeenNthCalledWith(3, expect.objectContaining({ denoiseEnabled: false }));
+    expect(sdk.init).toHaveBeenCalledTimes(3);
+    expect(sdk.engine.createCapture).toHaveBeenCalledTimes(3);
+  });
+
   it('reports SDK initialization failure and allows a later retry', async () => {
     const { createMicrophoneCapture } = await import('../electron/audio/audioEngine');
     sdk.init.mockRejectedValueOnce(new Error('missing native binary'));

@@ -37,6 +37,7 @@ const tellusDesktop: TellusDesktopApi = {
   start: (input) => invoke('realtime:start', input),
   pause: () => invoke('realtime:pause'),
   resume: () => invoke('realtime:resume'),
+  setDenoiseEnabled: (enabled) => invoke('realtime:set-denoise', enabled),
   stop: () => invoke('realtime:stop'),
 };
 
