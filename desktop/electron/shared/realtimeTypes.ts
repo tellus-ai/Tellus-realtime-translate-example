@@ -70,6 +70,7 @@ export interface SessionSnapshot {
   audioConnection: ConnectionStatus;
   rows: TranslationRow[];
   audioSdkReady: boolean;
+  recordingAvailable: boolean;
   denoise: DenoiseSnapshot;
   vad: ClientVadSnapshot;
   error: string | null;

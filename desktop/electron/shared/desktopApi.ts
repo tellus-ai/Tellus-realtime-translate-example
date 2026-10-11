@@ -9,6 +9,7 @@ export type DesktopIpcChannel =
   | 'realtime:pause'
   | 'realtime:resume'
   | 'realtime:set-denoise'
+  | 'realtime:download-audio'
   | 'realtime:stop';
 
 /** Pushed from main to the renderer whenever the session snapshot changes. */
@@ -46,4 +47,5 @@ export interface TellusDesktopApi {
   resume(): Promise<DesktopResult<null>>;
   setDenoiseEnabled(enabled: boolean): Promise<DesktopResult<null>>;
   stop(): Promise<DesktopResult<null>>;
+  downloadAudio(): Promise<DesktopResult<string>>;
 }

@@ -49,11 +49,12 @@ const mockRealtime = jest.mocked(useRealtimeTranslation);
 
 function unpreparedSession(phase: 'idle' | 'ended' | 'error') {
   mockRealtime.mockReturnValue({
-    phase, conversationId: null, audioSdkReady: false, rows: [], error: null,
+    phase, conversationId: null, audioSdkReady: false, recordingAvailable: false, rows: [], error: null,
     denoise: { enabled: true, applied: null, updating: false, error: null },
     resultConnection: 'closed', audioConnection: 'closed',
     vad: { enabled: false, ready: false, mode: 'disabled', gate: 'closed' },
     start: jest.fn(), pause: jest.fn(), resume: jest.fn(), stop: jest.fn(), setDenoiseEnabled: jest.fn(),
+    downloadAudio: jest.fn(),
   });
 }
 

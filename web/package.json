@@ -11,11 +11,12 @@
     "prebuild": "npm run prepare:engine",
     "preview": "vite preview",
     "test": "TMPDIR=/tmp vitest run",
+    "test:download-server": "node --test scripts/recording-download-middleware.check.cjs",
     "test:live": "node --env-file=.env scripts/live-smoke.mjs",
     "typecheck": "tsc -b --pretty false",
     "prepare:engine": "node scripts/prepare-engine-assets.mjs",
     "test:engine-browser": "TMPDIR=/private/tmp node scripts/browser-engine-e2e.mjs",
-    "verify:pre-commit": "npm run typecheck && npm test && npm run build"
+    "verify:pre-commit": "npm run typecheck && npm test && npm run test:download-server && npm run build"
   },
   "dependencies": {
     "@tellus-ai/audio-sdk-web": "file:../../tellus-audio-sdk/platforms/web",

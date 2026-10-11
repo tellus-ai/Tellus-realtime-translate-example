@@ -34,6 +34,7 @@ export interface SessionSnapshot {
   audioConnection: ConnectionStatus;
   rows: TranslationRow[];
   audioSdkReady: boolean;
+  recordingAvailable: boolean;
   denoise: DenoiseSnapshot;
   error: string | null;
   vad: VadSnapshot;

@@ -8,6 +8,7 @@ import {
   type StartConversationInput,
 } from '../api/conversationApi';
 import type { MicrophoneRecorder } from '../audio/NativeMicrophone';
+import { OggOpusRecording, type AudioRecordingFile } from '../audio/OggOpusRecording';
 import type { AudioChunk } from '@tellus-ai/audio-sdk-mobile';
 import type { VadSnapshot } from '../audio/VADTypes';
 
@@ -32,8 +33,9 @@ type NativeWebSocketConstructor = new (
 interface PendingOpen { timeout: Timer; resolve(usable: boolean): void }
 
 export class RealtimeTranslationSession {
-  private snapshot: SessionSnapshot = { phase: 'idle', conversationId: null, resultConnection: 'closed', audioConnection: 'closed', rows: [], audioSdkReady: false, denoise: { enabled: true, applied: null, updating: false, error: null }, error: null, vad: DISABLED_VAD_SNAPSHOT };
+  private snapshot: SessionSnapshot = { phase: 'idle', conversationId: null, resultConnection: 'closed', audioConnection: 'closed', rows: [], audioSdkReady: false, recordingAvailable: false, denoise: { enabled: true, applied: null, updating: false, error: null }, error: null, vad: DISABLED_VAD_SNAPSHOT };
   private listeners = new Set<Listener>();
+  private recording = new OggOpusRecording();
   private sockets: Record<RealtimeSocket, WebSocket | null> = { result: null, audio: null };
   // The server explains an error close with a `system.error` just before it.
   private lastSocketError: Record<RealtimeSocket, SystemError | null> = { result: null, audio: null };
@@ -70,6 +72,11 @@ export class RealtimeTranslationSession {
   }
   getSnapshot(): SessionSnapshot { return this.snapshot; }
 
+  getRecording(): AudioRecordingFile {
+    if (!['idle', 'ended', 'error'].includes(this.snapshot.phase)) throw new Error('Stop the session before downloading audio.');
+    return this.recording.getFile();
+  }
+
   setDenoiseEnabled(enabled: boolean): Promise<void> {
     if (this.endpoints.audioSdkEnabled === false || this.snapshot.denoise.updating ||
         !['idle', 'ended', 'error', 'recording', 'paused'].includes(this.snapshot.phase)) return Promise.resolve();
@@ -97,6 +104,7 @@ export class RealtimeTranslationSession {
     if (!['idle', 'ended', 'error'].includes(this.snapshot.phase) || this.snapshot.denoise.updating) return;
     const generation = ++this.generation;
     this.intentionalClose = false;
+    this.recording.reset();
     this.reconnectAttempt = 0;
     this.sampleCursor = 0;
     this.statusSequence = 0;
@@ -109,6 +117,7 @@ export class RealtimeTranslationSession {
       error: null,
       conversationId: null,
       audioSdkReady: false,
+      recordingAvailable: false,
       denoise: { ...this.snapshot.denoise, applied: null, error: null },
       vad: DISABLED_VAD_SNAPSHOT,
     });
@@ -430,6 +439,7 @@ export class RealtimeTranslationSession {
     if (this.intentionalClose || generation !== this.generation || this.snapshot.phase !== 'recording') await this.microphone.pause().catch(() => {});
   }
   private handleAudioFrame(chunk: AudioChunk): void {
+    if (!['idle', 'ended', 'error'].includes(this.snapshot.phase)) this.recording.append(chunk);
     if (!this.acceptingAudio || !['recording', 'stopping'].includes(this.snapshot.phase)) return;
     const socket = this.sockets.audio;
     if (socket?.readyState !== WebSocket.OPEN) return;
@@ -470,7 +480,7 @@ export class RealtimeTranslationSession {
     this.closeSocket('audio');
     if (!keepResultSocket) this.closeSocket('result');
     await this.microphone.stop().catch(() => {});
-    this.update({ audioSdkReady: false });
+    this.update({ audioSdkReady: false, recordingAvailable: this.recording.hasAudio });
   }
   private enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
     const result = this.lifecycleQueue.then(operation);

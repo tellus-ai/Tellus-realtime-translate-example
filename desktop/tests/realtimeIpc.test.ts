@@ -8,6 +8,7 @@ type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => Promise<Deskto
 function setup({ trusted = true } = {}) {
   const handlers = new Map<string, Handler>();
   const session = {
+    getRecording: vi.fn(() => ({ fileName: 'tellus-recording-test.ogg', data: new Uint8Array([1, 2, 3]) })),
     getSnapshot: vi.fn(() => ({ phase: 'idle' }) as ReturnType<RealtimeIpcOptions['session']['getSnapshot']>),
     start: vi.fn(async () => {}),
     pause: vi.fn(async () => {}),
@@ -15,16 +16,36 @@ function setup({ trusted = true } = {}) {
     stop: vi.fn(async () => {}),
     setDenoiseEnabled: vi.fn(async () => {}),
   };
+  const saveRecording = vi.fn(async () => '/Downloads/tellus-recording-test.ogg');
   registerRealtimeIpc({
     ipcMain: { handle: (channel, handler) => handlers.set(channel, handler as Handler) },
     session,
+    saveRecording,
     isTrustedSender: () => trusted,
   });
   const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)!({} as IpcMainInvokeEvent, ...args);
-  return { session, invoke };
+  return { session, saveRecording, invoke };
 }
 
 describe('registerRealtimeIpc', () => {
+  it('saves main-owned audio to the main-owned Downloads destination', async () => {
+    const { session, saveRecording, invoke } = setup();
+    await expect(invoke('realtime:download-audio', '/untrusted-path')).resolves.toEqual({ ok: true, data: '/Downloads/tellus-recording-test.ogg' });
+    expect(saveRecording).toHaveBeenCalledWith(session.getRecording.mock.results[0].value);
+  });
+
+  it('blocks audio downloads from untrusted senders', async () => {
+    const { session, saveRecording, invoke } = setup({ trusted: false });
+    await expect(invoke('realtime:download-audio')).resolves.toMatchObject({ ok: false });
+    expect(session.getRecording).not.toHaveBeenCalled();
+    expect(saveRecording).not.toHaveBeenCalled();
+  });
+
+  it('returns download failures to the renderer', async () => {
+    const { saveRecording, invoke } = setup();
+    saveRecording.mockRejectedValueOnce(new Error('Disk is full.'));
+    await expect(invoke('realtime:download-audio')).resolves.toMatchObject({ ok: false, error: { message: 'Disk is full.' } });
+  });
   it('forwards session commands from the trusted renderer', async () => {
     const { session, invoke } = setup();
     const input = { sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true };

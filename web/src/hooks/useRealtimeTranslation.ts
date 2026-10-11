@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { BrowserMicrophone } from '../audio/BrowserMicrophone';
+import { downloadRecording } from '../audio/downloadRecording';
 import { realtimeSpeechConfig } from '../config/realtimeSpeechConfig';
 import { RealtimeTranslationSession } from '../realtime/RealtimeTranslationSession';
 import type { StartConversationInput } from '../api/conversationApi';
@@ -29,5 +30,6 @@ export function useRealtimeTranslation() {
     resume: useCallback(() => session.resume(), [session]),
     setDenoiseEnabled: useCallback((enabled: boolean) => session.setDenoiseEnabled(enabled), [session]),
     stop: useCallback(() => session.stop(), [session]),
+    downloadAudio: useCallback(async () => downloadRecording(session.getRecording()), [session]),
   };
 }

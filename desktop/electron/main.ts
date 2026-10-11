@@ -10,6 +10,7 @@ import {
   systemPreferences,
 } from 'electron';
 import { createMicrophoneCapture, initializeAudioEngine } from './audio/audioEngine';
+import { downloadRecording } from './audio/downloadRecording';
 import { readEnvFile, resolveRealtimeSpeechConfig } from './config';
 import { RealtimeTranslationSession } from './realtime/RealtimeTranslationSession';
 import { createRealtimeApi } from './realtimeApi';
@@ -96,6 +97,7 @@ function startApp(): void {
   registerRealtimeIpc({
     ipcMain,
     session: realtimeSession,
+    saveRecording: (recording) => downloadRecording(app.getPath('home'), recording),
     isTrustedSender: (event) => isTrustedIpcSender(event, isTrusted),
   });
   mainWindow = createMainWindow({ accessTokenConfigured: Boolean(config.accessToken), audioSdkEnabled: config.audioSdkEnabled });

@@ -14,7 +14,7 @@ npm run ios
 
 `./dev.sh [start|ios|android]`도 SDK 또는 엔진 파일이 없으면 같은 setup을 실행한다. setup 이후 `npm run ios` 또는 `npm run android`로 SDK가 포함된 개발 앱을 빌드한다.
 
-현재 workspace는 `../../tellus-audio-sdk/platforms/mobile`의 SDK 0.2.3을 사용한다. `.npmrc`의 `install-links=true`로 앱의 `node_modules`에 복사 설치한다. SDK installer가 플랫폼 binary와 `fe-s16.temc`, `fe-s48.temc`, `silero-vad.temc` 암호화 모델을 준비해야 한다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 고객 앱 코드는 React Native TypeScript로 유지하며 Swift·Kotlin·Podfile·Gradle을 직접 작성하지 않는다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
+현재 workspace는 `../../tellus-audio-sdk/platforms/mobile`의 SDK 0.2.3을 사용한다. `.npmrc`의 `install-links=true`로 앱의 `node_modules`에 복사 설치한다. SDK installer가 플랫폼 binary와 `fe-s16.temc`, `fe-s48.temc`, `silero-vad.temc` 암호화 모델을 준비해야 한다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 오디오 캡처 구현은 SDK에 위임하며 고객 앱에서는 React Native TypeScript API를 사용한다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
 
 sibling SDK의 `vendor`에 iOS·Android 바이너리와 모델이 이미 준비되어 있으면 다운로드 없이 로컬 설치할 수 있다. 설치 후 iOS Pods를 갱신하고 앱을 다시 빌드한다.
 
@@ -60,3 +60,13 @@ Android에서는 `adb reverse tcp:8088 tcp:8088`을 설정하고 `ANDROID_SERIAL
 
 
 `.github/workflows/audio-engine-mobile.yml`은 같은 workflow의 선행 job에서 테스트용 engine artifact를 만든 뒤, SDK 전체 게이트·예제 타입/Jest·fresh Expo prebuild·실제 iOS Simulator/Android Emulator probe를 실행한다. private engine/SDK checkout에는 `TELLUS_CI_REPOSITORY_TOKEN`을 저장소 secret으로 설정하고, 수동 실행의 `engine_ref`/`sdk_ref`로 검증할 revision을 지정한다. 이 작업에서는 원격 CI를 실행하지 않는다. `eas.json`은 로컬 검토용 Debug 개발 프로필을 준비하며 EAS 서명·배포는 수행하지 않는다.
+
+## 로컬 캡처 음성 다운로드
+
+**Start → Stop → Download Audio** 순서로 SDK가 캡처한 음성을 `tellus-recording-<timestamp>.ogg` 파일로 저장한다. 기존 SDK Opus 프레임을 Ogg 컨테이너에 담으므로 번역용 전송 설정은 유지한다.
+
+저장 위치는 **Expo 개발 서버를 실행하는 Mac의 `~/download`**이며, 현재 Mac에서는 `/Users/lucas/download`이다. iOS·Android에서 JS 번들을 제공하는 Metro 서버에 파일을 전송하고, `metro.config.js`의 저장 middleware가 소문자 `download` 폴더를 생성해 저장한다. 서버 주소는 React Native `SourceCode`의 HTTP(S) 번들 URL 또는 Expo `hostUri`에서 얻는다. 완료 후 Mac의 실제 저장 경로를 표시한다. 기존 파일은 덮어쓰지 않는다.
+
+이 기능은 로컬 Expo 개발 서버 연결이 필요하다. `metro.config.js` 변경 후에는 Metro를 재시작한다. 기기·시뮬레이터가 연결된 Mac에 저장하며, 서버 연결 또는 파일 저장에 실패하면 오류를 표시하고 재시도할 수 있게 녹음 데이터를 유지한다. 앱 내부나 기기의 Download 폴더로 우회 저장하지 않는다. 별도 다운로드 네이티브 모듈이나 저장소 권한은 사용하지 않는다.
+
+Pause/Resume과 재연결 전후에 캡처한 음성은 한 파일에 포함한다. 캡처하지 않은 일시정지·연결 중단 시간은 생략하며, 오류 종료 후에도 이미 캡처한 음성은 저장할 수 있다. 음성은 메모리에 보관하다 다음 Start 또는 앱 종료 시 지우므로 새 세션 시작 전에 다운로드한다.

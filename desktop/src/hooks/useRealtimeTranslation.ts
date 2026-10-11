@@ -12,6 +12,7 @@ const INITIAL_SNAPSHOT: SessionSnapshot = {
   audioConnection: 'closed',
   rows: [],
   audioSdkReady: false,
+  recordingAvailable: false,
   denoise: { enabled: false, applied: null, updating: false, error: null },
   vad: { enabled: false, ready: false, mode: 'disabled', gate: 'open', isSpeech: false, probability: 0, level: 'off' },
   error: null,
@@ -55,5 +56,10 @@ export function useRealtimeTranslation() {
     resume: useCallback(() => unwrap(tellusDesktop.resume()), []),
     setDenoiseEnabled: useCallback((enabled: boolean) => unwrap(tellusDesktop.setDenoiseEnabled(enabled)), []),
     stop: useCallback(() => unwrap(tellusDesktop.stop()), []),
+    downloadAudio: useCallback(async () => {
+      const result = await tellusDesktop.downloadAudio();
+      if (!result.ok) throw new Error(result.error.message);
+      return result.data;
+    }, []),
   };
 }

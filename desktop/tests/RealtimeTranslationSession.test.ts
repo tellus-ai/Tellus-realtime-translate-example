@@ -1763,3 +1763,57 @@ describe('desktop SDK denoise selection', () => {
     await session.stop();
   });
 });
+
+function recordedPacketCount(data: Uint8Array): number {
+  let offset = 0;
+  let packets = 0;
+  while (offset < data.length) {
+    const view = new DataView(data.buffer, data.byteOffset + offset);
+    const segments = data[offset + 26];
+    const size = data.subarray(offset + 27, offset + 27 + segments).reduce((sum, value) => sum + value, 0);
+    if (view.getUint32(18, true) >= 2) packets++;
+    offset += 27 + segments + size;
+  }
+  return packets;
+}
+
+describe('SDK audio download lifecycle', () => {
+  it('offers captured audio after Stop, retains Pause/Resume audio, and resets on the next Start', async () => {
+    const { session, capture } = await startSession();
+    expect(session.getSnapshot().recordingAvailable).toBe(false);
+    expect(() => session.getRecording()).toThrow('Stop the session');
+    capture.emit();
+    await session.pause();
+    await session.resume();
+    capture.emit();
+    await session.stop();
+    expect(session.getSnapshot().recordingAvailable).toBe(true);
+    const file = session.getRecording();
+    expect(recordedPacketCount(file.data)).toBe(2);
+    expect(session.getRecording().data).toEqual(file.data);
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    expect(session.getSnapshot().recordingAvailable).toBe(false);
+    await session.stop();
+    expect(session.getSnapshot().recordingAvailable).toBe(false);
+    expect(() => session.getRecording()).toThrow('No captured audio');
+  });
+
+  it('retains already captured audio when a socket failure ends the session', async () => {
+    const { session, capture, resultSocket } = await startSession();
+    capture.emit();
+    resultSocket.serverClose(1008, 'forbidden');
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', recordingAvailable: true });
+    expect(recordedPacketCount(session.getRecording().data)).toBe(1);
+  });
+
+  it('includes the audio captured before and after an audio socket reconnect', async () => {
+    const { session, capture, audioSocket } = await startSession();
+    capture.emit();
+    audioSocket.serverClose(1006, '');
+    await reopenedAfter(1_000);
+    capture.emit();
+    await session.stop();
+    expect(recordedPacketCount(session.getRecording().data)).toBe(2);
+  });
+});

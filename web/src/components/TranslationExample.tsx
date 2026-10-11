@@ -25,11 +25,23 @@ export function TranslationExample() {
   const [sourceLanguage, setSourceLanguage] = useState('ko-KR');
   const [targetLanguage, setTargetLanguage] = useState('en-US');
   const [vadSelected, setVadSelected] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const audioSdkEnabled = realtimeSpeechConfig.audioSdkEnabled !== false;
   const clientVad = vadSelected && !audioSdkEnabled;
   const tokenConfigured = Boolean(realtimeSpeechConfig.accessToken);
   const active = ['preparing-audio', 'creating', 'configuring', 'connecting', 'recording', 'paused', 'reconnecting', 'stopping'].includes(realtime.phase);
   const busy = ['preparing-audio', 'creating', 'configuring', 'connecting', 'stopping'].includes(realtime.phase);
+
+  async function downloadAudio() {
+    setDownloading(true);
+    setDownloadMessage(null);
+    setDownloadError(null);
+    try { setDownloadMessage(`저장 완료: ${await realtime.downloadAudio()}`); }
+    catch (error) { setDownloadError(error instanceof Error ? error.message : String(error)); }
+    finally { setDownloading(false); }
+  }
 
   return (
     <main className="example-shell">
@@ -59,7 +71,10 @@ export function TranslationExample() {
       </section>
 
       <section className="control-panel">
-        <button disabled={active || !tokenConfigured || realtime.denoise.updating} onClick={() => void realtime.start({ sourceLanguage, targetLanguage, clientVad })}>
+        <button disabled={active || downloading || !tokenConfigured || realtime.denoise.updating} onClick={() => {
+          setDownloadMessage(null); setDownloadError(null);
+          void realtime.start({ sourceLanguage, targetLanguage, clientVad });
+        }}>
           Start
         </button>
         {realtime.phase === 'recording' ? (
@@ -68,7 +83,14 @@ export function TranslationExample() {
           <button disabled={realtime.phase !== 'paused'} onClick={() => void realtime.resume()}>Resume</button>
         )}
         <button className="danger" disabled={!active || busy} onClick={() => void realtime.stop()}>Stop</button>
+        <button disabled={active || !realtime.recordingAvailable || downloading} onClick={() => void downloadAudio()}>
+          {downloading ? 'Saving…' : 'Download Audio'}
+        </button>
       </section>
+
+      <p className="phase">Stop 후 SDK 캡처 음성을 Mac의 ~/download 폴더에 Ogg(Opus) 파일로 저장합니다.</p>
+      {downloadMessage && <p className="phase" role="status">{downloadMessage}</p>}
+      {downloadError && <p className="error" role="alert">{downloadError}</p>}
 
       <ConnectionStatus result={realtime.resultConnection} audio={realtime.audioConnection} />
       <p className="phase">Status: {realtime.phase}</p>

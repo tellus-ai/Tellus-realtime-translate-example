@@ -5,6 +5,7 @@ import {
   type EngineAuthorizationSocket,
 } from '@tellus-ai/audio-sdk-desktop/authorization';
 import type { RealtimeApi } from '../realtimeApi';
+import { OggOpusRecording, type AudioRecordingFile } from '../audio/OggOpusRecording';
 import type { StartConversationInput } from '../shared/desktopApi';
 import type {
   ClientVadSnapshot,
@@ -78,6 +79,10 @@ export interface RealtimeWebSocket extends EngineAuthorizationSocket {
 export interface CapturedAudioChunk {
   data: { microphone?: Uint8Array };
   sampleCount: number;
+  sampleRate?: number;
+  validSampleCount?: number;
+  sample?: number;
+  sequence?: number;
   gateEvent?: string;
   discontinuity?: unknown;
 }
@@ -115,11 +120,13 @@ export class RealtimeTranslationSession {
     audioConnection: 'closed',
     rows: [],
     audioSdkReady: false,
+    recordingAvailable: false,
     denoise: { enabled: false, applied: null, updating: false, error: null },
     vad: disabledVadSnapshot(false),
     error: null,
   };
   private listeners = new Set<Listener>();
+  private recording = new OggOpusRecording();
   private sockets: Record<RealtimeSocket, RealtimeWebSocket | null> = { result: null, audio: null };
   // The server explains an error close with a `system.error` just before it.
   private lastSocketError: Record<RealtimeSocket, SystemError | null> = { result: null, audio: null };
@@ -168,6 +175,11 @@ export class RealtimeTranslationSession {
 
   getSnapshot(): SessionSnapshot {
     return this.snapshot;
+  }
+
+  getRecording(): AudioRecordingFile {
+    if (this.isActive()) throw new Error('Stop the session before downloading audio.');
+    return this.recording.getFile();
   }
 
   async setDenoiseEnabled(enabled: boolean): Promise<void> {
@@ -264,6 +276,7 @@ export class RealtimeTranslationSession {
 
     const generation = ++this.generation;
     this.intentionalClose = false;
+    this.recording.reset();
     this.reconnectAttempt = 0;
     this.statusSequence = 0;
     this.desiredPaused = false;
@@ -276,6 +289,7 @@ export class RealtimeTranslationSession {
       error: null,
       conversationId: null,
       audioSdkReady: false,
+      recordingAvailable: false,
       denoise: { ...this.snapshot.denoise, applied: null, error: null },
       vad: disabledVadSnapshot(true),
     });
@@ -443,6 +457,7 @@ export class RealtimeTranslationSession {
       this.failActiveSession(`Audio capture failed: ${error.message}`);
       return;
     }
+    this.recording.append(chunk);
     if (this.clientVad) {
       if (chunk.gateEvent === 'speech_gate_opened') this.engineGate = 'open';
       else if (chunk.gateEvent === 'speech_gate_closed') this.engineGate = 'closed';
@@ -776,7 +791,7 @@ export class RealtimeTranslationSession {
     } catch {
       // The native capture is released either way.
     }
-    this.update({ audioSdkReady: false, denoise: { ...this.snapshot.denoise, applied: null, updating: false } });
+    this.update({ audioSdkReady: false, recordingAvailable: this.recording.hasAudio, denoise: { ...this.snapshot.denoise, applied: null, updating: false } });
   }
 
   /** The server reported the end of the Conversation, so there is nothing left for `POST /end`. */

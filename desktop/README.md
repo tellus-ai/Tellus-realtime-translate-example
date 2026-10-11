@@ -307,3 +307,9 @@ and ends the Conversation in `finally`. Set `SMOKE_ORIGIN` to check how the serv
 ```bash
 npm run test:live
 ```
+
+## 로컬 캡처 음성 다운로드
+
+**Start → Stop → Download Audio** 순서로 SDK가 캡처한 음성을 `tellus-recording-<timestamp>.ogg` 파일로 저장합니다. Electron main이 `app.getPath('home')` 아래의 소문자 `download` 디렉토리(`~/download`)에 저장하며, 폴더가 없으면 생성하고 완료 후 경로를 표시합니다. 기존 파일을 덮어쓰지 않습니다. renderer는 파일 경로나 음성 데이터를 저장 IPC에 전달하지 않습니다.
+
+SDK의 기존 Opus 프레임을 Ogg 컨테이너에 담으며, Pause/Resume·재연결·denoise 변경 전후에 캡처한 음성을 유지합니다. 캡처하지 않은 시간은 생략하고, 오류로 종료된 세션의 음성도 다운로드할 수 있습니다. 녹음 데이터는 다음 Start 또는 앱 종료 시 메모리에서 지워지므로 새 세션 시작 전에 다운로드하세요.

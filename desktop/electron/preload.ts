@@ -39,6 +39,7 @@ const tellusDesktop: TellusDesktopApi = {
   resume: () => invoke('realtime:resume'),
   setDenoiseEnabled: (enabled) => invoke('realtime:set-denoise', enabled),
   stop: () => invoke('realtime:stop'),
+  downloadAudio: () => invoke('realtime:download-audio'),
 };
 
 contextBridge.exposeInMainWorld('tellusDesktop', tellusDesktop);

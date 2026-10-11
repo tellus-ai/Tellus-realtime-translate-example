@@ -11,7 +11,8 @@
     "test": "jest --runInBand --watchman=false",
     "type-check": "tsc --noEmit",
     "test:setup": "node --test scripts/setup.test.mjs",
-    "verify:pre-commit": "npm run type-check && npm test && npm run test:setup"
+    "test:download-server": "node --test scripts/recording-download-middleware.check.cjs",
+    "verify:pre-commit": "npm run type-check && npm test && npm run test:setup && npm run test:download-server"
   },
   "dependencies": {
     "@expo/env": "2.4.3",

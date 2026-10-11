@@ -152,3 +152,11 @@ verifies both WebSocket connections and PCM16 transmission, and then terminates 
 ```bash
 npm run test:live
 ```
+
+## 로컬 캡처 음성 다운로드
+
+**Start → Stop → Download Audio** 순서로 SDK가 캡처한 음성을 `tellus-recording-<timestamp>.ogg` 파일로 저장합니다. SDK의 기존 Opus 전송 프레임을 Ogg 컨테이너에 저장하므로 번역용 오디오 전송 설정은 그대로 유지합니다. 저장 위치는 **Vite 개발·preview 서버를 실행하는 Mac의 `~/download`**이며, 현재 Mac에서는 `/Users/lucas/download`입니다. 서버가 소문자 `download` 폴더를 생성해 저장하고 완료 후 실제 경로를 표시합니다. 기존 파일을 덮어쓰지 않습니다.
+
+파일 저장은 로컬 Vite 서버의 `/__tellus/recordings/` middleware가 처리합니다. `npm run dev` 또는 `npm run preview`로 로컬 서버를 실행해야 하며, 정적 웹 호스팅만으로는 Mac에 파일을 저장할 수 없습니다. 서버 연결 또는 저장에 실패하면 오류를 표시하며 브라우저의 기본 다운로드 폴더로 우회하지 않습니다.
+
+Pause/Resume과 재연결 전후에 캡처된 음성은 한 파일에 포함됩니다. 캡처하지 않은 일시정지·연결 중단 시간은 파일에 포함되지 않습니다. 세션 오류로 종료해도 이미 캡처된 음성은 다운로드할 수 있습니다. 음성은 메모리에 보관하며 다음 Start 또는 페이지 종료 시 지워집니다. 보관하려면 새 세션을 시작하기 전에 다운로드하세요.
