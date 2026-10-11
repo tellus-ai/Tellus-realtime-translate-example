@@ -1,14 +1,6 @@
-import type { ClientVadSnapshot, VadEvent, VadLevel } from '../audio/vad/VADTypes';
+import type { ClientVadSnapshot, VadEvent } from '../audio/vad/VADTypes';
 
 export type MicrophoneState = 'capturing' | 'paused' | 'idle';
-
-export function resolveVadLevel(enabled: boolean, isSpeech: boolean, probability: number): VadLevel {
-  if (!enabled || !isSpeech) return 'off';
-  if (probability >= 0.85) return 'veryStrong';
-  if (probability >= 0.65) return 'strong';
-  if (probability >= 0.5) return 'medium';
-  return 'weak';
-}
 
 export function disabledVadSnapshot(ready = true): ClientVadSnapshot {
   return {
@@ -16,9 +8,6 @@ export function disabledVadSnapshot(ready = true): ClientVadSnapshot {
     ready,
     mode: 'disabled',
     gate: 'open',
-    isSpeech: false,
-    probability: 0,
-    level: 'off',
   };
 }
 
@@ -28,9 +17,6 @@ export function sileroVadSnapshot(ready = false): ClientVadSnapshot {
     ready,
     mode: 'silero',
     gate: 'closed',
-    isSpeech: false,
-    probability: 0,
-    level: 'off',
   };
 }
 

@@ -1,6 +1,7 @@
 import { RealtimeApiError, requestJson } from './httpClient';
 
 export interface RealtimeEndpoints {
+  audioSdkEnabled?: boolean;
   httpBaseUrl: string;
   websocketBaseUrl: string;
   appOrigin: string;
@@ -61,5 +62,5 @@ export function buildResultWebSocketUrl(endpoints: RealtimeEndpoints, conversati
 }
 
 export function buildAudioWebSocketUrl(endpoints: RealtimeEndpoints, conversationId: string): string {
-  return `${endpoints.websocketBaseUrl}/audio?conversation_id=${encodeURIComponent(conversationId)}&audio_format=pcm16`;
+  return `${endpoints.websocketBaseUrl}/audio?conversation_id=${encodeURIComponent(conversationId)}&audio_format=opus`;
 }

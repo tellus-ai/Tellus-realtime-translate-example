@@ -1,6 +1,5 @@
 import type { MicrophoneRecorder } from '../src/audio/NativeMicrophone';
-import type { PcmAudioFrame } from '../src/audio/PcmFramePipeline';
-import type { VadRuntime } from '../src/audio/VADClient';
+import type { AudioChunk } from '@tellus-ai/audio-sdk-mobile';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 
 const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test', appOrigin: 'https://app.example.test' };
@@ -31,17 +30,33 @@ function gate(): { opened: Promise<void>; open: () => void } {
 }
 
 class FakeMicrophone implements MicrophoneRecorder {
+  audioSdkReady = true;
+  denoiseEnabled = true;
+  async setDenoiseEnabled(enabled: boolean): Promise<boolean> { this.denoiseEnabled = enabled; return enabled; }
+  prepareError: Error | null = null;
   capturing = false;
   startError: Error | null = null;
   resumeError: Error | null = null;
   /** A start and a pause finish only when these resolve. */
   startGate: Promise<void> = Promise.resolve();
+  authorizationGate: Promise<void> = Promise.resolve();
   pauseGate: Promise<void> = Promise.resolve();
-  private onFrame: ((frame: PcmAudioFrame) => void) | null = null;
+  private onFrame: ((frame: AudioChunk) => void) | null = null;
   private onError: ((error: Error) => void) | null = null;
 
-  async prepare(): Promise<void> {}
-  async start(onFrame: (frame: PcmAudioFrame) => void, onError: (error: Error) => void): Promise<void> {
+  private vad = false;
+  private gateOpen = false;
+  async prepare(vad: boolean): Promise<void> { if (this.prepareError) throw this.prepareError; this.vad = vad; }
+  async authorize(socket: WebSocket): Promise<void> {
+    if (socket.readyState !== WebSocket.OPEN) await new Promise<void>(resolve => {
+      const opened = socket.onopen;
+      socket.onopen = event => { opened?.call(socket, event); resolve(); };
+    });
+    await this.authorizationGate;
+    this.gateOpen = false;
+  }
+  releaseAuthorization(): void { this.capturing = false; }
+  async start(onFrame: (frame: AudioChunk) => void, onError: (error: Error) => void): Promise<void> {
     await this.startGate;
     if (this.startError) throw this.startError;
     this.onFrame = onFrame;
@@ -50,6 +65,7 @@ class FakeMicrophone implements MicrophoneRecorder {
   }
   async pause(): Promise<void> {
     this.capturing = false;
+    this.gateOpen = false;
     await this.pauseGate;
   }
   async resume(): Promise<void> {
@@ -61,21 +77,17 @@ class FakeMicrophone implements MicrophoneRecorder {
     this.capturing = false;
   }
   emit(): void {
-    this.onFrame?.({ samples: new Float32Array(320), pcm16: new ArrayBuffer(640), sampleCount: 320 });
+    const event = this.vad && !this.gateOpen ? 'speech_gate_opened' : undefined;
+    this.gateOpen = this.vad;
+    this.onFrame?.({ data: { microphone: new Uint8Array(30) }, trackSource: 'microphone', codec: 'opus',
+      sampleRate: 16000, sampleCount: 320, validSampleCount: 320, durationMs: 20, sample: 0, timestamp: 0, rms: 0,
+      gateEvent: event });
   }
   /** The native recorder reports an error. */
   fail(error: Error): void {
     this.onError?.(error);
   }
 }
-
-/** Reports speech for every frame, so the gate opens on the first frame after every reset. */
-const speechRuntime: VadRuntime = {
-  initialize: async () => {},
-  process: async () => 0.9,
-  reset: () => {},
-  dispose: async () => {},
-};
 
 class FakeSocket {
   static readonly CONNECTING = 0;
@@ -182,7 +194,7 @@ function result(eventType: string, orderSeq: number, text: string, targetLanguag
 
 function createSession() {
   const microphone = new FakeMicrophone();
-  const session = new RealtimeTranslationSession(endpoints, microphone, 'token', speechRuntime);
+  const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
   return { session, microphone };
 }
 
@@ -428,10 +440,10 @@ describe('RealtimeTranslationSession reconnects', () => {
 
     microphone.emit();
     await flush();
-    // Status first, then the gate event of the reset VAD, both counted from sample 0 again.
-    const [status, gateOpened, frame] = reopened.sent;
+    // Status first, then audio counted from sample 0 again; client VAD stays disabled.
+    const [status, frame] = reopened.sent;
     expect(JSON.parse(status as string)).toMatchObject({ boundary_sample: 0, mic: { state: 'capturing' } });
-    expect(JSON.parse(gateOpened as string)).toMatchObject({ boundary_sample: 0, vad: { event: 'speech_gate_opened' } });
+    expect(JSON.parse(status as string).vad).toEqual({ enabled: false });
     expect(frame).toBeInstanceOf(ArrayBuffer);
     // status_seq keeps counting through the Conversation.
     expect(JSON.parse(status as string).status_seq).toBeGreaterThan(
@@ -483,7 +495,7 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(audioSocket.sent.filter((item) => typeof item === 'string')).toHaveLength(1);
   });
 
-  it('keeps the VAD gate and the sample cursor while only Result reconnects', async () => {
+  it('keeps client VAD disabled and the sample cursor while only Result reconnects', async () => {
     const { session, microphone, resultSocket, audioSocket } = await startSession(true);
     microphone.emit();
     await flush();
@@ -492,11 +504,10 @@ describe('RealtimeTranslationSession reconnects', () => {
     microphone.emit();
     await flush();
 
-    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', vad: { gate: 'open' } });
-    // The gate opened once, on the first frame, and the second frame follows it without a new status.
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioSdkReady: true, vad: { enabled: false } });
+    // Result reconnect does not insert another audio status or enable client VAD.
     expect(audioSocket.sent.map((item) => (typeof item === 'string' ? describeStatus(item) : 'audio frame'))).toEqual([
       'audio.status capturing',
-      'audio.status capturing speech_gate_opened',
       'audio frame',
       'audio frame',
     ]);
@@ -815,6 +826,29 @@ describe('RealtimeTranslationSession while starting', () => {
   const start = (session: RealtimeTranslationSession) =>
     session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
 
+  it.each([1001, 1006])('shows the server authorization reason when the native audio socket closes with %i', async (code) => {
+    FakeSocket.onConnect = (socket) => {
+      socket.accept();
+      if (socket.kind !== 'audio') return;
+      socket.receive(systemError(1008, 'engine_authentication_invalid', 'engine_authentication_invalid'));
+      socket.serverClose(code, 'Stream end encountered');
+    };
+    const { session, microphone } = createSession();
+    await start(session);
+    await flush();
+
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'error',
+      error: 'Audio engine authorization was rejected (1008: engine_authentication_invalid). Check that the server supports this SDK\'s authorization request and model-key protocol.',
+      resultConnection: 'closed',
+      audioConnection: 'closed',
+    });
+    expect(endRequests()).toHaveLength(1);
+    expect(microphone.capturing).toBe(false);
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(socketKinds()).toEqual(['result', 'audio']);
+  });
+
   it('fails the start with the server message when /audio is accepted and then refused', async () => {
     FakeSocket.onConnect = (socket) => {
       socket.accept();
@@ -992,7 +1026,7 @@ describe('RealtimeTranslationSession while the microphone starts', () => {
 });
 
 describe('RealtimeTranslationSession stop', () => {
-  it('sends gate close and idle, waits for the last finals, closes /audio, ends, then closes Result', async () => {
+  it('sends idle, waits for the last finals, closes /audio, ends, then closes Result', async () => {
     server.sendsEnded = false;
     const { session, microphone, resultSocket, audioSocket } = await startSession(true);
     microphone.emit();
@@ -1002,17 +1036,17 @@ describe('RealtimeTranslationSession stop', () => {
 
     const stopped = session.stop();
     await flush();
-    expect(timeline).toEqual(['audio.status capturing speech_gate_closed', 'audio.status idle']);
+    expect(timeline).toEqual(['audio.status idle']);
     expect(session.getSnapshot().phase).toBe('stopping');
 
     await jest.advanceTimersByTimeAsync(1_000);
     resultSocket.receive(result('transcript.final', 0, '안녕하세요.'));
     await flush();
     // The transcript is final, but its translation is still missing.
-    expect(timeline).toHaveLength(2);
+    expect(timeline).toHaveLength(1);
     resultSocket.receive(result('translation.final', 0, 'Hello.', 'en-US'));
     await flush();
-    expect(timeline.slice(2)).toEqual(['audio close', `POST ${END_PATH}`]);
+    expect(timeline.slice(1)).toEqual(['audio close', `POST ${END_PATH}`]);
     expect(audioSocket.detached).toBe(true);
     expect(resultSocket.readyState).toBe(FakeSocket.OPEN);
     expect(session.getSnapshot().phase).toBe('stopping');
@@ -1021,7 +1055,7 @@ describe('RealtimeTranslationSession stop', () => {
     resultSocket.receive(result('transcript.final', 1, '마지막 문장.'));
     resultSocket.receive({ type: 'conversation.ended', data: {} });
     await stopped;
-    expect(timeline.slice(4)).toEqual(['result close']);
+    expect(timeline.slice(3)).toEqual(['result close']);
     expect(session.getSnapshot()).toMatchObject({ phase: 'ended', error: null, resultConnection: 'closed', audioConnection: 'closed' });
     expect(session.getSnapshot().rows.map((row) => row.source?.text)).toEqual(['안녕하세요.', '마지막 문장.']);
     expect(endRequests()).toHaveLength(1);
@@ -1122,5 +1156,182 @@ describe('RealtimeTranslationSession stop', () => {
     expect(endRequests()).toHaveLength(4);
     expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'Temporarily unavailable.', resultConnection: 'closed' });
     expect(resultSocket.readyState).toBe(FakeSocket.CLOSED);
+  });
+});
+
+// socket open만으로 OS 캡처를 시작하면 permit/key 준비 전 데이터가 유출된다.
+test('permit과 모델키 준비 완료 후 마이크를 시작한다', async () => {
+  const { session, microphone } = createSession();
+  const held = gate();
+  microphone.authorizationGate = held.opened;
+  const starting = session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+  await flush();
+  expect(session.getSnapshot().audioConnection).toBe('open');
+  expect(session.getSnapshot().phase).toBe('connecting');
+  expect(microphone.capturing).toBe(false);
+  held.open();
+  await starting;
+  expect(microphone.capturing).toBe(true);
+});
+
+describe('Audio SDK requirement', () => {
+  it('reports SDK usage only after preparation and clears it on stop', async () => {
+    const { session, microphone } = createSession();
+    const prepare = jest.spyOn(microphone, 'prepare');
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    expect(session.getSnapshot().audioSdkReady).toBe(false);
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
+    expect(prepare).toHaveBeenCalledWith(false);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioSdkReady: true, vad: { enabled: false, mode: 'disabled' } });
+    const settingsCall = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/interpretation-settings'));
+    expect(JSON.parse(String(settingsCall?.[1]?.body)).transcription.client_vad).toBe(false);
+    await session.stop();
+    expect(session.getSnapshot().audioSdkReady).toBe(false);
+  });
+
+  it('rejects non-SDK capture before creating a conversation', async () => {
+    const { session, microphone } = createSession();
+    microphone.audioSdkReady = false;
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: 'Audio SDK is required. Non-SDK audio capture is not supported.' });
+    expect(server.requests).toEqual([]);
+    expect(FakeSocket.instances).toEqual([]);
+    expect(microphone.capturing).toBe(false);
+  });
+
+  it('reports failed SDK initialization without opening sockets', async () => {
+    const { session, microphone } = createSession();
+    microphone.prepareError = new Error('Audio SDK is required but could not be initialized: missing engine');
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: microphone.prepareError.message });
+    expect(server.requests).toEqual([]);
+    expect(FakeSocket.instances).toEqual([]);
+  });
+});
+
+
+describe('disabled SDK configuration', () => {
+  it('fails before preparing capture or creating a conversation', async () => {
+    const microphone = new FakeMicrophone();
+    const prepare = jest.spyOn(microphone, 'prepare');
+    const session = new RealtimeTranslationSession({ ...endpoints, audioSdkEnabled: false }, microphone, 'token');
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: 'Audio SDK is required. Enable audio-sdk before starting a session.' });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(server.requests).toEqual([]);
+    expect(FakeSocket.instances).toEqual([]);
+  });
+});
+
+
+describe('Audio SDK denoise controls', () => {
+  it('uses a pre-start selection and changes denoise during recording without replacing sockets', async () => {
+    const { session, microphone } = createSession();
+    await session.setDenoiseEnabled(false);
+    expect(session.getSnapshot().denoise).toMatchObject({ enabled: false, applied: null });
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    expect(session.getSnapshot().denoise.applied).toBe(false);
+    await session.setDenoiseEnabled(true);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', denoise: { enabled: true, applied: true, updating: false, error: null } });
+    expect(microphone.capturing).toBe(true);
+    expect(socketKinds()).toEqual(['result', 'audio']);
+    expect(endRequests()).toHaveLength(0);
+    microphone.emit();
+    expect(latest().sent.some((frame) => typeof frame !== 'string')).toBe(true);
+  });
+
+  it('shows a rejected denoise change while keeping the last setting and translation running', async () => {
+    const { session, microphone } = await startSession();
+    const previous = session.getSnapshot().denoise.enabled;
+    jest.spyOn(microphone, 'setDenoiseEnabled').mockRejectedValueOnce(new Error('model_not_ready'));
+    await session.setDenoiseEnabled(!previous);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', error: null, denoise: {
+      enabled: previous, applied: previous, updating: false, error: 'Unable to change Audio SDK denoise: model_not_ready',
+    } });
+    expect(microphone.capturing).toBe(true);
+    expect(endRequests()).toHaveLength(0);
+  });
+
+  it('changes denoise while paused and preserves it for the next session', async () => {
+    const { session, microphone } = await startSession();
+    await session.pause();
+    await session.setDenoiseEnabled(true);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'paused', denoise: { enabled: true, applied: true } });
+    expect(microphone.capturing).toBe(false);
+    await session.stop();
+    expect(session.getSnapshot().denoise).toMatchObject({ enabled: true, applied: null });
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    expect(session.getSnapshot().denoise.applied).toBe(true);
+  });
+
+  it('waits for a pending setting before allowing Start', async () => {
+    const { session, microphone } = createSession();
+    const changing = gate();
+    microphone.setDenoiseEnabled = async (enabled) => { await changing.opened; microphone.denoiseEnabled = enabled; return enabled; };
+    const changed = session.setDenoiseEnabled(true);
+    await flush();
+    expect(session.getSnapshot().denoise.updating).toBe(true);
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    expect(server.requests).toHaveLength(0);
+    changing.open();
+    await changed;
+    expect(session.getSnapshot().denoise.updating).toBe(false);
+  });
+});
+
+function recordedPacketCount(data: Uint8Array): number {
+  let offset = 0;
+  let packets = 0;
+  while (offset < data.length) {
+    const view = new DataView(data.buffer, data.byteOffset + offset);
+    const segments = data[offset + 26];
+    const size = data.subarray(offset + 27, offset + 27 + segments).reduce((sum, value) => sum + value, 0);
+    if (view.getUint32(18, true) >= 2) packets++;
+    offset += 27 + segments + size;
+  }
+  return packets;
+}
+
+describe('SDK audio download lifecycle', () => {
+  it('offers captured audio after Stop, retains Pause/Resume audio, and resets on the next Start', async () => {
+    const { session, microphone } = await startSession();
+    expect(session.getSnapshot().recordingAvailable).toBe(false);
+    expect(() => session.getRecording()).toThrow('Stop the session');
+    microphone.emit();
+    await session.pause();
+    await session.resume();
+    microphone.emit();
+    await session.stop();
+    expect(session.getSnapshot().recordingAvailable).toBe(true);
+    const file = session.getRecording();
+    expect(recordedPacketCount(file.data)).toBe(2);
+    expect(session.getRecording().data).toEqual(file.data);
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    expect(session.getSnapshot().recordingAvailable).toBe(false);
+    await session.stop();
+    expect(session.getSnapshot().recordingAvailable).toBe(false);
+    expect(() => session.getRecording()).toThrow('No captured audio');
+  });
+
+  it('retains already captured audio when a socket failure ends the session', async () => {
+    const { session, microphone, resultSocket } = await startSession();
+    microphone.emit();
+    resultSocket.serverClose(1008, 'forbidden');
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', recordingAvailable: true });
+    expect(recordedPacketCount(session.getRecording().data)).toBe(1);
+  });
+
+  it('includes the audio captured before and after an audio socket reconnect', async () => {
+    const { session, microphone, audioSocket } = await startSession();
+    microphone.emit();
+    audioSocket.serverClose(1006, '');
+    await reopenedAfter(1_000);
+    microphone.emit();
+    await session.stop();
+    expect(recordedPacketCount(session.getRecording().data)).toBe(2);
   });
 });

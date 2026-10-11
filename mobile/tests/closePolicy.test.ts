@@ -37,6 +37,25 @@ describe('decideSocketClose', () => {
     });
   });
 
+  it.each([1001, 1006])('preserves the server authorization rejection when iOS reports %i', (code) => {
+    const lastError = systemError(1008, 'engine_authentication_invalid', 'engine_authentication_invalid');
+    expect(decideSocketClose(close({ code, reason: 'Stream end encountered', lastError }))).toEqual({
+      action: 'fail',
+      reason: 'engine_authentication_invalid',
+      message: 'Audio engine authorization was rejected (1008: engine_authentication_invalid). Check that the server supports this SDK\'s authorization request and model-key protocol.',
+      endConversation: true,
+    });
+  });
+
+  it('preserves replacement semantics when the native close code differs', () => {
+    const lastError = systemError(1008, 'audio_connection_replaced', 'Audio connection was replaced.');
+    expect(decideSocketClose(close({ code: 1001, reason: 'Stream end encountered', lastError }))).toMatchObject({
+      action: 'fail',
+      reason: 'audio_connection_replaced',
+      endConversation: false,
+    });
+  });
+
   it('stops without ending the Conversation when another connection replaced /audio', () => {
     expect(decideSocketClose(close({ code: 1008, reason: 'audio_connection_replaced' }))).toEqual({
       action: 'fail',
@@ -72,6 +91,7 @@ describe('decideSocketClose', () => {
   });
 
   it.each([
+    [1001, 'Stream end encountered'],
     [1006, ''],
     [1011, 'internal_error'],
     [1011, 'keepalive ping timeout'],
@@ -100,6 +120,16 @@ describe('decideSocketClose', () => {
     expect(decideSocketClose(close({ code: 1013, reason, lastError: longer }))).toMatchObject({ delayMs: 1_700 });
     expect(decideSocketClose(close({ code: 1013, reason, lastError: longer, attempt: 3 }))).toMatchObject({
       delayMs: 10_000,
+    });
+  });
+
+  it('preserves a server retry delay when iOS reports a stream end', () => {
+    const reason = 'audio_pipeline_activation_rate_limited';
+    const lastError = systemError(1013, reason, 'Audio pipeline reconnect rate limit exceeded.', 3_000);
+    expect(decideSocketClose(close({ code: 1001, reason: 'Stream end encountered', lastError }))).toEqual({
+      action: 'reconnect',
+      reason,
+      delayMs: 3_000,
     });
   });
 

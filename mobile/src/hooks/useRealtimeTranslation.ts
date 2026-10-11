@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
 import type { StartConversationInput } from '../api/conversationApi';
 import { NativeMicrophone } from '../audio/NativeMicrophone';
+import { downloadRecording } from '../audio/downloadRecording';
 import { realtimeSpeechConfig } from '../config/realtimeSpeechConfig';
 import { RealtimeTranslationSession } from '../realtime/RealtimeTranslationSession';
 
@@ -37,6 +38,8 @@ export function useRealtimeTranslation() {
     start: useCallback((input: StartConversationInput) => session.start(input), [session]),
     pause: useCallback(() => session.pause(), [session]),
     resume: useCallback(() => session.resume(), [session]),
+    setDenoiseEnabled: useCallback((enabled: boolean) => session.setDenoiseEnabled(enabled), [session]),
     stop: useCallback(() => session.stop(), [session]),
+    downloadAudio: useCallback(() => downloadRecording(session.getRecording()), [session]),
   };
 }

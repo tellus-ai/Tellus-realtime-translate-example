@@ -22,7 +22,7 @@ if ! awk -F= '
   exit 1
 fi
 
-if [[ ! -d node_modules/@tellus-ai/audio-sdk/vendor ]] || ! npm ls @tellus-ai/audio-sdk --depth=0 >/dev/null 2>&1; then
+if [[ ! -d node_modules/@tellus-ai/audio-sdk-desktop/vendor ]] || ! npm ls @tellus-ai/audio-sdk-desktop --depth=0 >/dev/null 2>&1; then
   npm run setup
 fi
 

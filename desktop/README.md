@@ -2,7 +2,7 @@
 
 A standalone Electron app that connects directly to the Tellus staging Realtime Speech server. Microphone
 capture, Silero VAD, and Opus encoding run in the native Tellus audio engine
-([`@tellus-ai/audio-sdk`](https://github.com/tellus-ai/tellus-audio-sdk)) inside the Electron main process.
+([`@tellus-ai/audio-sdk-desktop`](https://github.com/tellus-ai/tellus-audio-sdk)) inside the Electron main process.
 The React screen started as a copy of the [web example](../web/README.md); nothing is imported from `web/`.
 
 See the root [`README.md`](../README.md#api-contract) for the Swagger snapshot of the
@@ -24,23 +24,24 @@ You can also use the development script, which checks `.env` first.
 ./dev.sh
 ```
 
-`npm run setup` installs SDK **0.2.2** from the GitHub `v0.2.2` tag, with the exact commit recorded
-in `package-lock.json`. The SDK installer uses the existing customer installation token to request
-file-specific download tokens for native engine **0.3.1** and its checksum from
+`npm run setup` installs SDK **0.2.3** from the sibling `../../tellus-audio-sdk/platforms/desktop`
+package, with its version recorded in `package-lock.json`. The SDK installer uses the existing customer installation token to request
+file-specific download tokens for native engine **0.3.2** and its checksum from
 `TELLUS_AUDIO_DOWNLOAD_BASE_URL` (staging by default), then
 downloads the engine files from `https://download.tellus.ai.kr` and verifies SHA-256. Login and download
 tokens are kept out of package URLs, the lockfile, and logs. A CDN `401` gets one fresh grant and one retry.
 
 The token API must be deployed on the selected Realtime Speech server. Its environment prefix must
 contain the native engine archive for your platform and its `.sha256` file.
-For staging this is `stg/audio/engine/v0.3.1/`. A missing API returns
+For staging this is `stg/audio/engine/v0.3.2/`. A missing API returns
 `404`; a missing artifact or invalid installation token must be resolved before setup can finish.
 
 `TELLUS_AUDIO_ENGINE_TOKEN` is the existing Tellus-issued customer installation token. Installation
 does not use `API_KEY` or require an app login. `API_KEY` remains the login access token for REST calls
 and engine execution approval at runtime. Installation and execution token renewal are separate.
 Setup loads `.env` and passes both the engine token and download base URL to npm and its child
-processes. This also covers the temporary Git clone where npm prepares the SDK. Setup runs `npm ci`
+processes. The download server must match the installation token's environment; set
+`TELLUS_AUDIO_DOWNLOAD_BASE_URL` separately when the runtime server uses a different environment. Setup runs `npm ci`
 against the committed lockfile. A direct `npm install` or `npm ci` requires exporting both
 `TELLUS_AUDIO_ENGINE_TOKEN` and `TELLUS_AUDIO_DOWNLOAD_BASE_URL` in the shell first.
 
@@ -61,8 +62,8 @@ npm run dist   # installers for the current platform
 not configured. The engine's native addon, ONNX Runtime library, and models are unpacked from `app.asar`
 (`asarUnpack`) because native code cannot read files inside the archive.
 
-The build writes `dist/runtime.env` with only `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, and
-`API_KEY`, and the packaged app reads that file. `TELLUS_AUDIO_ENGINE_TOKEN` is never bundled. `API_KEY` is,
+The build writes `dist/runtime.env` with only `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, `API_KEY`, and
+`TELLUS_AUDIO_SDK_ENABLED`, and the packaged app reads that file. `TELLUS_AUDIO_ENGINE_TOKEN` is never bundled. `API_KEY` is,
 so anyone with the app can extract it, the same way the web build exposes the token in its bundle. Use a
 short-lived, restricted access token and do not distribute builds that contain your own token.
 
@@ -73,11 +74,20 @@ The main process owns the whole session; the renderer only draws it.
 | Process | Responsibility |
 | --- | --- |
 | Main | Audio engine capture, REST calls with `API_KEY`, Result and Audio WebSockets (`ws`), reconnects, transcript state |
-| Renderer | Language and VAD selection, Start/Pause/Resume/Stop, rendering the session snapshot pushed over IPC |
+| Renderer | Language and VAD selection, Audio SDK status, Start/Pause/Resume/Stop, rendering the session snapshot pushed over IPC |
 
-- **Audio engine.** `AudioEngine.init()` runs at app start and preloads the Silero model. Each session
-  creates a capture with 16 kHz, 20 ms Opus frames at 64 kbps and turns the engine VAD gate on or off with
-  `setVadEnabled()`. Denoise is off, matching the Tellus desktop app default.
+- **Audio SDK.** `AudioEngine.init()` runs at app start with client VAD disabled. Each session requires
+  SDK capture with 16 kHz, 20 ms Opus frames at 64 kbps. The UI shows **Audio SDK: 사용 중 / 사용하지 않음**
+  from the configured audio processing mode, independently of capture readiness. Missing or failed SDK initialization is a session error before a
+  Conversation is created. Denoise defaults to off, matching the Tellus desktop app default.
+- **Denoise control.** Change **Noise Reduction (Denoise)** before Start, while recording, or while
+  paused. The selection is passed to `AudioEngine.init()` and retained between sessions.
+  Since the desktop SDK configures denoise when creating capture, a live change replaces capture
+  and reopens only Audio to authorize the new native instance. The Conversation, Result connection,
+  transcript, and paused state are preserved; audio briefly pauses during the change. If capture
+  reconfiguration fails, the previous setting is restored, and the UI displays the error.
+  **Audio SDK denoise** shows the native capture's `denoiseActive` value; before Start it shows the
+  selected value separately.
 - **Execution authorization.** Before capture starts, `attachEngineAuthorization()` sends
   `audio.authenticate` on the Audio WebSocket and waits for the native engine to accept the signed
   permit. It sends `engine.renew` at most eight minutes apart, including while paused. Closing the
@@ -88,10 +98,13 @@ The main process owns the whole session; the renderer only draws it.
 - **Login credentials.** Each REST call and engine authorization request rereads `API_KEY` from the
   environment/runtime file. Engine permit renewal does not refresh the login JWT itself. Supply a valid
   login token; a production integration should obtain refreshed credentials from its login service.
-- **VAD boundaries.** The engine marks gate transitions on audio chunks (`gateEvent`). The session sends the
-  matching `audio.status` event before the frame it applies to, with `boundary_sample` counted from the start
-  of the current Audio WebSocket. A boundary that is open when the session pauses or stops is closed first,
-  and speech that is still in progress after a resume or reconnect re-opens it.
+- **Client VAD.** The SDK gate stays off (`vadEnabled: false`, `setVadEnabled(false)`) and interpretation
+  settings always use `client_vad: false`, even if a caller requests client VAD. Pause, resume, and
+  reconnect preserve this setting; `audio.status` reports `vad.enabled: false` without gate events.
+  SDK mode is enabled by default, so the VAD toggle is OFF and disabled from app launch, including after
+  Stop or a session error. Set `TELLUS_AUDIO_SDK_ENABLED=false` in `.env` to disable SDK mode and allow
+  VAD selection. SDK-disabled sessions still fail to start. `audioSdkReady` tracks capture readiness
+  separately and never unlocks the VAD toggle.
 - **No Origin header.** WebSockets and REST requests come from the main process, like other native
   clients, so the renderer origin (`tellus-translate://app`) never reaches the server and does not need to
   be on its allowlist. The WebSockets are opened with the `ws` package, which sends no Origin header
@@ -117,7 +130,7 @@ The session follows
 | Any other close code, including `1006`, `1011`, and `1013` | Reopens the socket after 1, 2, 5, 10, then every 30 seconds, or after `retry_after_ms` when that is longer. A socket that closes while a reconnect is already waiting is reopened by that reconnect. |
 | A socket closes, or is not usable in time, while starting (until both sockets are open and the engine is authorized, that is, before the status is `recording`) | The start fails. Nothing is reconnected. Result has 10 seconds to send `participants.snapshot`. `/audio` has 10 seconds to open, and the engine authorization then has its own 10 seconds. |
 | Only the Result WebSocket closed | Capture, the engine authorization, and `/audio` continue. Only Result is reopened. |
-| `/audio` closed | Disposes the engine authorization, which stops native capture, and shows `reconnecting`. The new socket is authorized first; then capture starts again and the sample cursor restarts at 0. The example sends an `audio.status` when the socket is authorized, which the server may ignore because no audio has arrived yet; VAD gate events follow with the audio frames. A session that was paused stays paused. |
+| `/audio` closed | Disposes the engine authorization, which stops native capture, and shows `reconnecting`. The new socket is authorized first; then capture starts again and the sample cursor restarts at 0. The example sends an `audio.status` when the socket is authorized, which the server may ignore because no audio has arrived yet; Client VAD stays disabled while audio frames continue. A session that was paused stays paused. |
 | Both sockets closed | Opens Result first and `/audio` after `participants.snapshot`. |
 | A reconnect attempt is not usable in time, or closes again | Moves to the next backoff step. The steps start over after both sockets stayed open for 30 seconds. |
 | Result reconnected | Shows the results that arrive from then on. Results sent while the Result WebSocket was closed are not recovered. |
@@ -226,7 +239,7 @@ process environment take precedence. Vite does not load `.env` for the renderer 
 | --- | --- |
 | `electron/main.ts` | App lifecycle, window, and wiring |
 | `electron/preload.ts` | `window.tellusDesktop` bridge |
-| `electron/audio/audioEngine.ts` | The only module that imports `@tellus-ai/audio-sdk` |
+| `electron/audio/audioEngine.ts` | The only module that imports `@tellus-ai/audio-sdk-desktop` |
 | `electron/realtime/RealtimeTranslationSession.ts` | Session lifecycle, WebSockets, engine authorization, `audio.status`, reconnects |
 | `electron/realtime/closePolicy.ts` | What each WebSocket close means, and the backoff steps |
 | `electron/realtime/nodeWebSocket.ts` | Opens the WebSockets with the `ws` package |
@@ -245,6 +258,34 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+현재 개발 후보는 sibling `../../tellus-audio-sdk/platforms/desktop`의 SDK 0.2.3을 사용한다.
+`.npmrc`의 `install-links=true`로 SDK를 앱의 `node_modules`에 복사 설치한다. 같은 엔진 후보의
+universal NAPI와 ORT/models가 sibling SDK의 `vendor/darwin-universal`에 준비되어 있으면
+다음 명령으로 다운로드 없이 로컬 설치할 수 있다.
+
+```bash
+npm ci --ignore-scripts
+node node_modules/electron/install.js
+cp -R ../../tellus-audio-sdk/platforms/desktop/vendor node_modules/@tellus-ai/audio-sdk-desktop/
+node node_modules/@tellus-ai/audio-sdk-desktop/dist/installer/check-binary-cli.js
+npm run build
+```
+
+공개 테스트 서명 키를 신뢰하도록 빌드한 테스트 바이너리에서 다음 명령은 원격 API를 호출하지 않는다.
+
+```bash
+TELLUS_ENGINE_TEST_LICENSE=1 npm run test:engine-local
+TELLUS_ENGINE_TEST_LICENSE=1 npm run test:engine-local -- --mic
+```
+
+기본 모드는 실제 SDK/NAPI SHA 일치, 로컬 permit 승인, 장치 접근 전 no-input 설정 거절과
+승인 폐기 후 start/resume 거절을 검증한다. `--mic`는 먼저 `npm run build`한 앱의 initializer로
+Silero를 preload하고 실제 16kHz Opus 캡처, pause/resume/stop 및 종료 후 callback 억제를 확인한다.
+CI의 `.github/workflows/desktop-example.yml`은 장치 없는 모드만 실행한다. private SDK/example
+checkout에는 두 저장소의 contents를 읽을 수 있는 `TELLUS_CI_REPOSITORY_TOKEN`을 설정하고,
+workflow dispatch의 `sdk_ref`/`example_ref`로 후보 revision을 선택한다. 원격 workflow 실행과
+실제 API 자격 증명 사용은 이번 로컬 검증에서 수행하지 않았다. 테스트 키 바이너리는 배포하지 않는다.
 
 After setup, verify real engine authorization against the endpoints in `.env`:
 
@@ -266,3 +307,9 @@ and ends the Conversation in `finally`. Set `SMOKE_ORIGIN` to check how the serv
 ```bash
 npm run test:live
 ```
+
+## 로컬 캡처 음성 다운로드
+
+**Start → Stop → Download Audio** 순서로 SDK가 캡처한 음성을 `tellus-recording-<timestamp>.ogg` 파일로 저장합니다. Electron main이 `app.getPath('home')` 아래의 소문자 `download` 디렉토리(`~/download`)에 저장하며, 폴더가 없으면 생성하고 완료 후 경로를 표시합니다. 기존 파일을 덮어쓰지 않습니다. renderer는 파일 경로나 음성 데이터를 저장 IPC에 전달하지 않습니다.
+
+SDK의 기존 Opus 프레임을 Ogg 컨테이너에 담으며, Pause/Resume·재연결·denoise 변경 전후에 캡처한 음성을 유지합니다. 캡처하지 않은 시간은 생략하고, 오류로 종료된 세션의 음성도 다운로드할 수 있습니다. 녹음 데이터는 다음 Start 또는 앱 종료 시 메모리에서 지워지므로 새 세션 시작 전에 다운로드하세요.

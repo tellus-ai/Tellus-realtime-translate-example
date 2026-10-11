@@ -1,129 +1,72 @@
-# Mobile Realtime Translation Example
+# 모바일 실시간 번역 예제
 
-A standalone Expo/React Native example that connects directly to the Tellus staging Realtime Speech server.
+Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile` 0.2.3이 OS 캡처, Rust DSP·FastEnhancer·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/audio`로 전달한다.
 
-See the root [`README.md`](../README.md#api-contract) for the
-Swagger snapshot of the REST and WebSocket contracts used by this example.
-
-## Run
-
-```bash
+```sh
 cp .env.example .env
-npm install
+# .env의 TELLUS_AUDIO_ENGINE_TOKEN과 API_KEY를 각각 설정한다.
+npm run setup
 npm run ios
-# or npm run android
+# 또는 npm run android
 ```
 
-You can also use the development script.
+`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 런타임 로그인용이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정하며, 없으면 `REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, staging 기본 주소 순서로 선택한다.
 
-```bash
-./dev.sh          # Start the Expo development client server
-./dev.sh ios      # Run the iOS development build
-./dev.sh android  # Run the Android development build
+`./dev.sh [start|ios|android]`도 SDK 또는 엔진 파일이 없으면 같은 setup을 실행한다. setup 이후 `npm run ios` 또는 `npm run android`로 SDK가 포함된 개발 앱을 빌드한다.
+
+현재 workspace는 `../../tellus-audio-sdk/platforms/mobile`의 SDK 0.2.3을 사용한다. `.npmrc`의 `install-links=true`로 앱의 `node_modules`에 복사 설치한다. SDK installer가 플랫폼 binary와 `fe-s16.temc`, `fe-s48.temc`, `silero-vad.temc` 암호화 모델을 준비해야 한다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 오디오 캡처 구현은 SDK에 위임하며 고객 앱에서는 React Native TypeScript API를 사용한다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
+
+sibling SDK의 `vendor`에 iOS·Android 바이너리와 모델이 이미 준비되어 있으면 다운로드 없이 로컬 설치할 수 있다. 설치 후 iOS Pods를 갱신하고 앱을 다시 빌드한다.
+
+```sh
+npm ci --ignore-scripts --legacy-peer-deps
+cp -R ../../tellus-audio-sdk/platforms/mobile/vendor node_modules/@tellus-ai/audio-sdk-mobile/
+(cd ios && pod install --no-repo-update)
+npm run ios
+# 또는 npm run android
 ```
 
-Because this example uses a native audio module, it requires a development build rather than Expo Go.
-Set an OAuth access token in `API_KEY` in `.env`, select two different languages, and start the session.
-The token cannot be entered or changed in the app UI. Restart the development server after changing
-environment variables.
+`.env`의 `API_KEY`에 OAuth access token을 설정하고 서로 다른 두 언어를 선택한다. `/audio` socket의 `attachEngineAuthorization.ready`가 permit과 모델 키를 적용한 뒤 마이크 권한을 요청하고 캡처를 시작한다. 새 socket마다 같은 capture를 재승인하며, 승인 폐기 시 OS 캡처와 대기 출력도 중단한다.
 
-## Environment
+- 처리·전송: Opus, 16kHz mono, 20ms
+- denoise: FastEnhancer 기본 활성화; `EXPO_PUBLIC_TELLUS_DENOISE=false`로 초기 비활성화 가능. **Noise Reduction (Denoise)** 스위치로 Start 전과 녹음·일시정지 중에 변경할 수 있다. SDK의 `setDenoiseEnabled()`로 적용한 뒤 `getStatus()`로 확인하며, **Audio SDK denoise**에 적용 상태를 표시한다. 선택값은 Stop 후 다음 세션에도 유지하고, 적용 실패는 번역을 종료하지 않고 표시한다.
+- Audio SDK: SDK 활성화 설정에 따라 UI에 `사용 중 / 사용하지 않음` 표시; SDK 초기화 실패·미사용 시 Conversation 생성 전에 오류 표시
+- VAD: audio-sdk 사용 시 클라이언트 VAD 비활성화 (`vadEnabled: false`, `client_vad: false`); SDK는 기본 활성화이므로 앱 실행 직후부터 정지·오류 후에도 토글을 OFF로 고정하고 클릭·변경 차단; `.env`의 `TELLUS_AUDIO_SDK_ENABLED=false`로 명시적으로 끈 경우에만 VAD 선택 가능 (SDK 미사용 세션 시작 오류 유지), gate 이벤트 전송 없음
+- background·interruption·route 변경: 자동 캡처 재개 없이 중단하며 새 승인이 필요한 연결은 재승인 후 재개
+- TTS: SDK `playback` 또는 `playbackEncoded`를 사용하면 OS 재생과 같은 PCM이 Rust AEC reference에 들어간다
 
-- HTTP: `https://stgrtsapi.tellus.ai.kr`
-- WebSocket: `wss://stgrtsapi.tellus.ai.kr`
-- Audio: PCM16, 16 kHz, mono, 20 ms
-- Client VAD: Silero VAD v6.2.1 ONNX + `onnxruntime-react-native` 1.24.3
+`npm start`, `npm run ios`, `npm run android`와 이를 실행하는 `./dev.sh start`, `./dev.sh ios`, `./dev.sh android`는 모두 `mobile/.env`를 읽는다. 서버 URL과 Origin은 `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, `APP_ORIGIN`으로 설정하며, 공통 `app.config.ts`가 Expo `extra`를 통해 앱에 전달한다. 기존 `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_WS_URL`, `EXPO_PUBLIC_APP_ORIGIN`도 지원하고, 두 형식이 함께 있으면 접두사가 없는 변수를 우선한다. `APP_ORIGIN`에는 서버에서 허용한 값을 지정해야 한다. 설정 변경 후 실행 중인 Metro를 종료하고 사용할 실행 명령을 다시 실행한다. access token은 앱 bundle에 포함되므로 partner secret이나 모델 content key를 넣지 않는다.
 
-Set `EXPO_PUBLIC_APP_ORIGIN` to an origin allowed by the Realtime Speech server.
-
-`API_KEY` is not committed to the source repository, but it is included in the client bundle when the mobile
-app runs. Values deployed to a mobile client cannot be considered secret, so use a short-lived, restricted
-access token.
-
-## Selecting VAD
-
-Enable **Voice Activity Detection** before starting to run Silero client VAD on the device and send
-`client_vad: true` in the server settings. It uses 0.5/0.35 hysteresis and a 550 ms hangover policy, and sends
-the gate-boundary status before the corresponding PCM frame. Silent PCM continues to be transmitted without
-interruption. When disabled, the app does not load the model and sends `client_vad: false` with a disabled VAD
-status to use server VAD. This setting cannot be changed during a session.
-
-Because ONNX Runtime is a native module, rebuild the development build after changing dependencies.
-A small `patch-package` compatibility patch is applied during installation so Expo autolinking recognizes
-ONNX Runtime as a valid React Native module. If you keep the native iOS directory, also run
-`npx pod-install ios`.
-
-The model comes from the Silero team's official v6.2.1 tag:
-`https://github.com/snakers4/silero-vad/blob/v6.2.1/src/silero_vad/data/silero_vad.onnx`.
-Its SHA-256 hash is `1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3`, and
-`npm run verify:vad-model` verifies it. The license is included in `assets/models/VADSileroLicense.md`.
-
-## Error Handling and Reconnects
-
-The session follows
-[Close codes and recommended client behavior](../README.md#close-codes-and-recommended-client-behavior),
-[Reconnecting after a disconnect](../README.md#reconnecting-after-a-disconnect), and
-[Ending a Conversation](../README.md#ending-a-conversation) in the root README.
-
-| Situation | What the example does |
-| --- | --- |
-| `system.error` on either socket | Keeps it as that socket's last error. Nothing is shown until the socket closes. |
-| `conversation.ended`, close `1000`, or `1008` with `conversation_ended` or `conversation_not_found` | Shows the Conversation as `ended` and stops. No reconnect and no `POST /end`. |
-| `1008` with `audio_connection_replaced` | Stops with an error and leaves the Conversation open for the other device or tab. |
-| Any other `1008` | Stops with the server message and calls `POST /end`. |
-| `1012` | Reopens the socket after a random 0.5–2 seconds, then backs off. |
-| Any other close code, including `1006`, `1011`, and `1013` | Reopens the socket after 1, 2, 5, 10, then every 30 seconds, or after `retry_after_ms` when that is longer. A socket that closes while a reconnect is already waiting is reopened by that reconnect. A close event that React Native delivers without a code is handled as `1006`. |
-| A socket closes, or is not usable within 10 seconds, while starting (until both sockets are open, that is, before the status is `recording`) | The start fails. Nothing is reconnected. The microphone starts after that; a socket that closes while it starts is reconnected. |
-| Only the Result WebSocket closed | Recording and `/audio` continue. Only Result is reopened. |
-| `/audio` closed | Pauses the microphone and shows `reconnecting`. On the new socket the sample cursor restarts at 0 and the client VAD is reset. The example sends an `audio.status` when the socket opens, which the server may ignore because no audio has arrived yet; VAD gate events follow with the audio frames. A session that was paused, or is paused while `/audio` reconnects, comes back paused. |
-| Both sockets closed | Opens Result first and `/audio` after `participants.snapshot`. |
-| A reconnect attempt is not usable within 10 seconds, or closes again | Moves to the next backoff step. The steps start over after both sockets stayed open for 30 seconds. |
-| Result reconnected | Shows the results that arrive from then on. Results sent while the Result WebSocket was closed are not recovered. |
-| Stop | Sends `speech_gate_closed` (if the gate is open) and `idle`, waits up to 2 seconds for the last finals, closes `/audio`, calls `POST /end`, and keeps Result open until `conversation.ended` or for 5 more seconds. |
-| REST `503` | Retries after 1, 2, and 5 seconds. A request that gets no response, which includes the 15-second request timeout, is retried only for `POST /end`. `POST /end` treats `410` and `404` as ended. When every retry fails, the example gives up; if the request was `POST /end`, the Conversation stays open until its state expires 24 hours after creation. |
-
-A reconnect shows only in the status (`reconnecting` while `/audio` is down) and in the connection state of
-each socket. The close code and reason are not shown. `error` holds the message that stopped the session; a
-malformed message on the Result WebSocket also sets it, and the session continues.
-
-Source files:
-
-- `src/realtime/closePolicy.ts`: what each close means, and the backoff steps.
-- `src/realtime/RealtimeTranslationSession.ts`: sockets, reconnects, and the Stop sequence.
-- `src/realtime/resultParser.ts`: `system.error` and `participants.snapshot`.
-- `src/realtime/transcriptReducer.ts`: `awaitsFinal` tells which rows Stop still waits for.
-- `src/api/conversationApi.ts` and `src/api/httpClient.ts`: `POST /end` statuses and `503` retries.
-
-Not implemented:
-
-- Reconnecting when no result arrives for 20 seconds while the speaker is talking.
-- Watching `bufferedAmount` on `/audio`.
-- Reconnecting `/audio` after 10 minutes without audio.
-- Filling in finals missed while the Result WebSocket was closed, with `GET /conversations/{id}/messages`.
-  [Reconnecting after a disconnect](../README.md#reconnecting-after-a-disconnect) describes how.
-- Reconnecting at once when the network comes back, which the web example does on the browser `online`
-  event. The app does not listen for network changes, so a reconnect that is waiting runs when its backoff
-  delay ends.
-- Calling `POST /end` when the app is terminated, by the user or by the system. It is called on Stop, when
-  the component unmounts, and when the session stops with an error, unless the close was
-  `audio_connection_replaced` or the server had already reported the Conversation as ended. Moving to the
-  background only pauses recording, and the Conversation stays open.
-
-## Customizing the Design
-
-Replace the screens in `src/components/` to apply your own design. Communication and audio processing are
-encapsulated behind `useRealtimeTranslation()`. Recording pauses when the app moves to the background and
-must be resumed by the user after the app returns to the foreground. This also applies while `/audio` is
-reconnecting. A session that is still starting (`creating`, `configuring`, or `connecting`) is not paused.
-
-VAD-specific source files, tests, and verification scripts all start with `VAD`. The toggle and status UI are
-in `src/components/VADControl.tsx`, while the policy and Silero runtime are in `src/audio/VAD*.ts`.
-Keep the official Silero model filename and the third-party patch filename required by `patch-package`.
-
-## Verification
-
-```bash
-npm run type-check
-npm test
-npm run verify:vad-model
+```sh
+npm run verify:pre-commit
 ```
+
+네트워크 종료·재연결 정책은 [공통 API 문서](../README.md#api-contract)를 따른다. 마이크 payload의 `sampleCount`로 전송 cursor를 계산하고, `validSampleCount`는 마지막 padded 청크의 유효 범위를 나타낸다. Stop은 native flush를 승인된 socket에 전달한 뒤 최종 결과를 기다리고 Conversation을 종료한다.
+
+공개 CI 서명 키를 신뢰하는 개발용 engine artifact와 테스트 CEK는 실제 배포에 사용하지 않는다.
+
+
+Android host는 `app.json`과 SDK plugin으로 생성하는 로컬 산출물이므로 git에 저장하지 않는다. `npx expo prebuild --platform android --no-install`로 재생성할 수 있다. 기존 tracked iOS host는 유지하며 `prebuild --clean`으로 덮어쓰지 않는다. 새 CNG 앱에서는 [Expo 공식 흐름](https://docs.expo.dev/workflow/continuous-native-generation/)을 따라 두 플랫폼 모두 자동 생성할 수 있다.
+
+실제 개발 앱 검증은 아래 명령을 사용한다. 앱을 설치·실행하고 localhost Metro를 시작한 뒤, 공개 CI 서명 키로 빌드한 테스트 artifact와 임시 CEK 경로를 지정한다. 마이크 payload를 저장하거나 송신하지 않고 metadata만 검사하며, 재생은 합성 WAV로 검사한다.
+
+```sh
+NODE_OPTIONS=--dns-result-order=ipv4first CI=1 npx expo start --dev-client --localhost --port 8088
+TELLUS_ENGINE_TEST_LICENSE=1 METRO_URL=http://localhost:8088 node scripts/native-sdk-probe.mjs \
+  /path/to/Tellus-audio-engine ./node_modules/@tellus-ai/audio-sdk-mobile/vendor/ios/models /path/to/test-content-key.txt
+```
+
+Android에서는 `adb reverse tcp:8088 tcp:8088`을 설정하고 `ANDROID_SERIAL=emulator-5554`를 추가한다. probe가 테스트 승인 서버의 임시 포트도 자동으로 reverse한다. 승인 전 시작 거부, FE·VAD 모델 로드, 합성 재생 완료·취소, pause/reset/reconnect/stop-start, 정지 상태의 native 승인 만료를 검증한다. Android에서는 만료된 마이크 foreground service가 종료되었는지도 확인한다.
+
+
+`.github/workflows/audio-engine-mobile.yml`은 같은 workflow의 선행 job에서 테스트용 engine artifact를 만든 뒤, SDK 전체 게이트·예제 타입/Jest·fresh Expo prebuild·실제 iOS Simulator/Android Emulator probe를 실행한다. private engine/SDK checkout에는 `TELLUS_CI_REPOSITORY_TOKEN`을 저장소 secret으로 설정하고, 수동 실행의 `engine_ref`/`sdk_ref`로 검증할 revision을 지정한다. 이 작업에서는 원격 CI를 실행하지 않는다. `eas.json`은 로컬 검토용 Debug 개발 프로필을 준비하며 EAS 서명·배포는 수행하지 않는다.
+
+## 로컬 캡처 음성 다운로드
+
+**Start → Stop → Download Audio** 순서로 SDK가 캡처한 음성을 `tellus-recording-<timestamp>.ogg` 파일로 저장한다. 기존 SDK Opus 프레임을 Ogg 컨테이너에 담으므로 번역용 전송 설정은 유지한다.
+
+저장 위치는 **Expo 개발 서버를 실행하는 Mac의 `~/download`**이며, 현재 Mac에서는 `/Users/lucas/download`이다. iOS·Android에서 JS 번들을 제공하는 Metro 서버에 파일을 전송하고, `metro.config.js`의 저장 middleware가 소문자 `download` 폴더를 생성해 저장한다. 서버 주소는 React Native `SourceCode`의 HTTP(S) 번들 URL 또는 Expo `hostUri`에서 얻는다. 완료 후 Mac의 실제 저장 경로를 표시한다. 기존 파일은 덮어쓰지 않는다.
+
+이 기능은 로컬 Expo 개발 서버 연결이 필요하다. `metro.config.js` 변경 후에는 Metro를 재시작한다. 기기·시뮬레이터가 연결된 Mac에 저장하며, 서버 연결 또는 파일 저장에 실패하면 오류를 표시하고 재시도할 수 있게 녹음 데이터를 유지한다. 앱 내부나 기기의 Download 폴더로 우회 저장하지 않는다. 별도 다운로드 네이티브 모듈이나 저장소 권한은 사용하지 않는다.
+
+Pause/Resume과 재연결 전후에 캡처한 음성은 한 파일에 포함한다. 캡처하지 않은 일시정지·연결 중단 시간은 생략하며, 오류 종료 후에도 이미 캡처한 음성은 저장할 수 있다. 음성은 메모리에 보관하다 다음 Start 또는 앱 종료 시 지우므로 새 세션 시작 전에 다운로드한다.

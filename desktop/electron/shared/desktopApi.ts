@@ -8,6 +8,8 @@ export type DesktopIpcChannel =
   | 'realtime:start'
   | 'realtime:pause'
   | 'realtime:resume'
+  | 'realtime:set-denoise'
+  | 'realtime:download-audio'
   | 'realtime:stop';
 
 /** Pushed from main to the renderer whenever the session snapshot changes. */
@@ -16,6 +18,7 @@ export type DesktopSnapshotChannel = 'realtime:snapshot';
 export type DesktopConfigArgumentPrefix = '--tellus-desktop-config=';
 
 export interface DesktopConfig {
+  audioSdkEnabled: boolean;
   accessTokenConfigured: boolean;
 }
 
@@ -42,5 +45,7 @@ export interface TellusDesktopApi {
   start(input: StartConversationInput): Promise<DesktopResult<null>>;
   pause(): Promise<DesktopResult<null>>;
   resume(): Promise<DesktopResult<null>>;
+  setDenoiseEnabled(enabled: boolean): Promise<DesktopResult<null>>;
   stop(): Promise<DesktopResult<null>>;
+  downloadAudio(): Promise<DesktopResult<string>>;
 }

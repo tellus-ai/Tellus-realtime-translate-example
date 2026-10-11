@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   buildAudioStatusMessage,
   disabledVadSnapshot,
-  resolveVadLevel,
   sileroVadSnapshot,
 } from '../src/realtime/VADAudioStatus';
 
@@ -28,16 +27,8 @@ describe('audio status', () => {
     expect(paused.vad).toEqual({ enabled: false });
   });
 
-  it('maps the desktop SDK level boundaries', () => {
-    expect(resolveVadLevel(true, true, 0.49)).toBe('weak');
-    expect(resolveVadLevel(true, true, 0.5)).toBe('medium');
-    expect(resolveVadLevel(true, true, 0.65)).toBe('strong');
-    expect(resolveVadLevel(true, true, 0.85)).toBe('veryStrong');
-    expect(resolveVadLevel(true, false, 1)).toBe('off');
-  });
-
   it('includes a transition event only when supplied', () => {
-    const vad = { ...sileroVadSnapshot(true), gate: 'open' as const, isSpeech: true, probability: 0.9, level: 'veryStrong' as const };
+    const vad = { ...sileroVadSnapshot(true), gate: 'open' as const };
     const status = buildAudioStatusMessage({
       statusSequence: 3,
       sample: 640,

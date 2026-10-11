@@ -6,6 +6,7 @@ import { useRealtimeTranslation } from '../hooks/useRealtimeTranslation';
 import { ConnectionStatus } from './ConnectionStatus';
 import { TranslationList } from './TranslationList';
 import { VADStatus, VADToggle } from './VADControl';
+import { DenoiseStatus, DenoiseToggle } from './DenoiseControl';
 
 const LANGUAGES = [
   { code: 'ko-KR', label: '한국어 (Korean)' },
@@ -25,10 +26,24 @@ export function TranslationExample() {
   const realtime = useRealtimeTranslation();
   const [sourceLanguage, setSourceLanguage] = useState('ko-KR');
   const [targetLanguage, setTargetLanguage] = useState('en-US');
-  const [clientVad, setClientVad] = useState(true);
+  const [vadSelected, setVadSelected] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const audioSdkEnabled = realtimeSpeechConfig.audioSdkEnabled !== false;
+  const clientVad = vadSelected && !audioSdkEnabled;
   const tokenConfigured = Boolean(realtimeSpeechConfig.accessToken);
   const active = ['creating', 'configuring', 'connecting', 'recording', 'paused', 'reconnecting', 'stopping'].includes(realtime.phase);
   const busy = ['creating', 'configuring', 'connecting', 'stopping'].includes(realtime.phase);
+
+  async function downloadAudio() {
+    setDownloading(true);
+    setDownloadMessage(null);
+    setDownloadError(null);
+    try { setDownloadMessage(`저장 완료: ${await realtime.downloadAudio()}`); }
+    catch (error) { setDownloadError(error instanceof Error ? error.message : String(error)); }
+    finally { setDownloading(false); }
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -42,19 +57,31 @@ export function TranslationExample() {
         <LanguageButtons label="Source Language" selected={sourceLanguage} disabled={active} onChange={setSourceLanguage} />
         <LanguageButtons label="Target Language" selected={targetLanguage} disabled={active} onChange={setTargetLanguage} />
 
-        <VADToggle enabled={clientVad} disabled={active} onChange={setClientVad} />
+        <VADToggle enabled={clientVad} disabled={active} audioSdkEnabled={audioSdkEnabled} onChange={setVadSelected} />
+        <DenoiseToggle snapshot={realtime.denoise} disabled={busy || realtime.phase === 'reconnecting'} audioSdkEnabled={audioSdkEnabled}
+          onChange={(enabled) => void realtime.setDenoiseEnabled(enabled)} />
 
         <View style={styles.controls}>
-          <ActionButton label="Start" disabled={active || !tokenConfigured} onPress={() => void realtime.start({ sourceLanguage, targetLanguage, clientVad })} />
+          <ActionButton label="Start" disabled={active || downloading || !tokenConfigured || realtime.denoise.updating} onPress={() => {
+            setDownloadMessage(null); setDownloadError(null);
+            void realtime.start({ sourceLanguage, targetLanguage, clientVad });
+          }} />
           {realtime.phase === 'recording'
             ? <ActionButton label="Pause" onPress={() => void realtime.pause()} />
             : <ActionButton label="Resume" disabled={realtime.phase !== 'paused'} onPress={() => void realtime.resume()} />}
           <ActionButton label="Stop" danger disabled={!active || busy} onPress={() => void realtime.stop()} />
+          <ActionButton label={downloading ? 'Saving…' : 'Download Audio'} disabled={active || !realtime.recordingAvailable || downloading} onPress={() => void downloadAudio()} />
         </View>
+
+        <Text style={styles.phase}>Stop 후 SDK 캡처 음성을 Mac의 ~/download 폴더에 Ogg(Opus) 파일로 저장합니다.</Text>
+        {downloadMessage ? <Text style={styles.phase} accessibilityLiveRegion="polite">{downloadMessage}</Text> : null}
+        {downloadError ? <Text style={styles.error} accessibilityRole="alert">{downloadError}</Text> : null}
 
         <ConnectionStatus result={realtime.resultConnection} audio={realtime.audioConnection} />
         <Text style={styles.phase}>Status: {realtime.phase}</Text>
-        <VADStatus snapshot={realtime.vad} />
+        <Text style={styles.phase}>Audio SDK: {audioSdkEnabled ? '사용 중' : '사용하지 않음'}</Text>
+        <DenoiseStatus snapshot={realtime.denoise} audioSdkEnabled={audioSdkEnabled} />
+        <VADStatus snapshot={realtime.vad} audioSdkEnabled={audioSdkEnabled} />
         {realtime.error ? <Text style={styles.error}>{realtime.error}</Text> : null}
         <TranslationList rows={realtime.rows} targetLanguage={targetLanguage} />
       </ScrollView>
@@ -98,7 +125,7 @@ const styles = StyleSheet.create({
   languageSelected: { backgroundColor: '#246bfe' },
   languageButtonText: { color: '#27364a' },
   languageSelectedText: { color: '#ffffff', fontWeight: '700' },
-  controls: { flexDirection: 'row', gap: 8, marginBottom: 20, marginTop: 24 },
+  controls: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20, marginTop: 24 },
   action: { backgroundColor: '#246bfe', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 11 },
   danger: { backgroundColor: '#d33b45' },
   disabled: { opacity: 0.4 },

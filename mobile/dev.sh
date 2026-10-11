@@ -22,8 +22,9 @@ if ! awk -F= '
   exit 1
 fi
 
-if [[ ! -d node_modules ]]; then
-  npm install
+if ! npm ls @tellus-ai/audio-sdk-mobile --depth=0 >/dev/null 2>&1 || \
+  ! node --env-file=.env node_modules/@tellus-ai/audio-sdk-mobile/dist/installer/check-binary-cli.js >/dev/null 2>&1; then
+  npm run setup
 fi
 
 target="${1:-start}"

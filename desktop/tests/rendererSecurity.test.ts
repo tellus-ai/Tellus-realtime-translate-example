@@ -49,6 +49,7 @@ describe('buildContentSecurityPolicy', () => {
 describe('resolveRealtimeSpeechConfig', () => {
   it('uses the staging server by default and trims values', () => {
     expect(resolveRealtimeSpeechConfig({ API_KEY: ' token ' })).toEqual({
+      audioSdkEnabled: true,
       accessToken: 'token',
       httpBaseUrl: 'https://stgrtsapi.tellus.ai.kr',
       websocketBaseUrl: 'wss://stgrtsapi.tellus.ai.kr',
@@ -71,5 +72,10 @@ describe('resolveRealtimeSpeechConfig', () => {
       .toThrow('REALTIME_SPEECH_HTTP_URL must use https:');
     expect(() => resolveRealtimeSpeechConfig({ REALTIME_SPEECH_WS_URL: 'https://rts.example.test' }))
       .toThrow('REALTIME_SPEECH_WS_URL must use wss:');
+  });
+
+  it('disables SDK mode only when explicitly configured off', () => {
+    expect(resolveRealtimeSpeechConfig({ TELLUS_AUDIO_SDK_ENABLED: ' false ' }).audioSdkEnabled).toBe(false);
+    expect(resolveRealtimeSpeechConfig({ TELLUS_AUDIO_SDK_ENABLED: 'true' }).audioSdkEnabled).toBe(true);
   });
 });

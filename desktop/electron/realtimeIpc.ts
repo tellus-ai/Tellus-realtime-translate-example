@@ -2,16 +2,18 @@ import type { IpcMain, IpcMainInvokeEvent } from 'electron';
 import type { RealtimeTranslationSession } from './realtime/RealtimeTranslationSession';
 import { toDesktopError } from './realtimeApi';
 import type { DesktopIpcChannel, DesktopResult, StartConversationInput } from './shared/desktopApi';
+import type { AudioRecordingFile } from './audio/OggOpusRecording';
 
 const LANGUAGE_TAG = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 
 export interface RealtimeIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>;
-  session: Pick<RealtimeTranslationSession, 'getSnapshot' | 'start' | 'pause' | 'resume' | 'stop'>;
+  session: Pick<RealtimeTranslationSession, 'getSnapshot' | 'getRecording' | 'start' | 'pause' | 'resume' | 'stop' | 'setDenoiseEnabled'>;
+  saveRecording(recording: AudioRecordingFile): Promise<string>;
   isTrustedSender(event: IpcMainInvokeEvent): boolean;
 }
 
-export function registerRealtimeIpc({ ipcMain, session, isTrustedSender }: RealtimeIpcOptions): void {
+export function registerRealtimeIpc({ ipcMain, session, saveRecording, isTrustedSender }: RealtimeIpcOptions): void {
   const handle = <T>(channel: DesktopIpcChannel, handler: (...args: unknown[]) => Promise<T> | T) => {
     ipcMain.handle(channel, async (event, ...args): Promise<DesktopResult<T>> => {
       try {
@@ -24,6 +26,8 @@ export function registerRealtimeIpc({ ipcMain, session, isTrustedSender }: Realt
   };
 
   handle('realtime:get-snapshot', () => session.getSnapshot());
+  // Main owns both the recording and the destination; renderer input cannot select a path.
+  handle('realtime:download-audio', () => saveRecording(session.getRecording()));
   handle('realtime:start', async (input) => {
     await session.start(readStartConversationInput(input));
     return null;
@@ -34,6 +38,11 @@ export function registerRealtimeIpc({ ipcMain, session, isTrustedSender }: Realt
   });
   handle('realtime:resume', async () => {
     await session.resume();
+    return null;
+  });
+  handle('realtime:set-denoise', async (enabled) => {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid denoise setting.');
+    await session.setDenoiseEnabled(enabled);
     return null;
   });
   handle('realtime:stop', async () => {

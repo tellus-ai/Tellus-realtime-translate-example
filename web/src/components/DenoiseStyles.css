@@ -1,0 +1,5 @@
+.setup-panel .denoise-option { align-content: end; }
+.denoise-toggle-row { display: flex; min-height: 42px; align-items: center; gap: 10px; font-weight: 500; }
+.denoise-toggle-row input { width: 18px; height: 18px; margin: 0; accent-color: #246bfe; }
+.denoise-option[aria-disabled="true"] { cursor: not-allowed; opacity: .5; }
+.denoise-toggle-row input:disabled { cursor: not-allowed; }

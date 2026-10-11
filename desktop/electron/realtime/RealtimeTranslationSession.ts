@@ -3,8 +3,9 @@ import {
   type AuthorizableAudioCapture,
   type EngineAuthorizationController,
   type EngineAuthorizationSocket,
-} from '@tellus-ai/audio-sdk/authorization';
+} from '@tellus-ai/audio-sdk-desktop/authorization';
 import type { RealtimeApi } from '../realtimeApi';
+import { OggOpusRecording, type AudioRecordingFile } from '../audio/OggOpusRecording';
 import type { StartConversationInput } from '../shared/desktopApi';
 import type {
   ClientVadSnapshot,
@@ -78,19 +79,25 @@ export interface RealtimeWebSocket extends EngineAuthorizationSocket {
 export interface CapturedAudioChunk {
   data: { microphone?: Uint8Array };
   sampleCount: number;
+  sampleRate?: number;
+  validSampleCount?: number;
+  sample?: number;
+  sequence?: number;
   gateEvent?: string;
   discontinuity?: unknown;
 }
 
 export interface CaptureVadStatus {
+  denoiseActive: boolean;
   vadReady: boolean;
   vadGateState: string;
   vadProbability: number;
   vadIsSpeech: boolean;
 }
 
-/** The parts of the audio engine capture the session drives (`AudioCapture` in @tellus-ai/audio-sdk). */
+/** The parts of the audio engine capture the session drives (`AudioCapture` in @tellus-ai/audio-sdk-desktop). */
 export interface MicrophoneCapture extends AuthorizableAudioCapture {
+  readonly audioSdkReady: boolean;
   onError(callback: (error: Error | null, detail: { message: string; recoverable: boolean }) => unknown): void;
   start(callback: (error: Error | null, chunk: CapturedAudioChunk) => unknown): void;
   pause(): void;
@@ -101,6 +108,7 @@ export interface MicrophoneCapture extends AuthorizableAudioCapture {
 }
 
 export interface RealtimeEndpoints {
+  audioSdkEnabled?: boolean;
   websocketBaseUrl: string;
 }
 
@@ -111,10 +119,14 @@ export class RealtimeTranslationSession {
     resultConnection: 'closed',
     audioConnection: 'closed',
     rows: [],
+    audioSdkReady: false,
+    recordingAvailable: false,
+    denoise: { enabled: false, applied: null, updating: false, error: null },
     vad: disabledVadSnapshot(false),
     error: null,
   };
   private listeners = new Set<Listener>();
+  private recording = new OggOpusRecording();
   private sockets: Record<RealtimeSocket, RealtimeWebSocket | null> = { result: null, audio: null };
   // The server explains an error close with a `system.error` just before it.
   private lastSocketError: Record<RealtimeSocket, SystemError | null> = { result: null, audio: null };
@@ -151,7 +163,7 @@ export class RealtimeTranslationSession {
   constructor(
     private readonly endpoints: RealtimeEndpoints,
     private readonly api: RealtimeApi,
-    private readonly createCapture: () => Promise<MicrophoneCapture>,
+    private readonly createCapture: (denoiseEnabled: boolean) => Promise<MicrophoneCapture>,
     private readonly getAccessToken: () => string | Promise<string>,
     private readonly createSocket: (url: string) => RealtimeWebSocket = createNodeWebSocket,
   ) {}
@@ -165,6 +177,87 @@ export class RealtimeTranslationSession {
     return this.snapshot;
   }
 
+  getRecording(): AudioRecordingFile {
+    if (this.isActive()) throw new Error('Stop the session before downloading audio.');
+    return this.recording.getFile();
+  }
+
+  async setDenoiseEnabled(enabled: boolean): Promise<void> {
+    if (this.endpoints.audioSdkEnabled === false || this.snapshot.denoise.updating) return;
+    if (!this.isActive()) {
+      this.update({ denoise: { enabled, applied: null, updating: false, error: null } });
+      return;
+    }
+    if (!['recording', 'paused'].includes(this.snapshot.phase) || this.audioCloseTimer !== null ||
+        this.sockets.audio?.readyState !== SOCKET_OPEN || enabled === this.snapshot.denoise.enabled) return;
+
+    const generation = this.generation;
+    this.update({ denoise: { ...this.snapshot.denoise, updating: true, error: null } });
+    await this.enqueueLifecycle(async () => {
+      if (generation !== this.generation) return;
+      const previous = this.snapshot.denoise.enabled;
+      this.acceptingAudio = false;
+      const vad = this.idleVadSnapshot();
+      this.closeSocketGate(vad);
+      this.sendAudioStatus('paused', vad);
+      this.update({ phase: 'reconnecting', vad });
+      try {
+        if (!await this.replaceCapture(enabled, generation)) return;
+        this.update({ denoise: { enabled, applied: this.capture!.getStatus().denoiseActive, updating: false, error: null } });
+      } catch (error) {
+        if (generation !== this.generation) return;
+        const message = `Unable to change Audio SDK denoise: ${error instanceof Error ? error.message : String(error)}`;
+        try {
+          if (!await this.replaceCapture(previous, generation)) return;
+          this.update({ denoise: { enabled: previous, applied: this.capture!.getStatus().denoiseActive, updating: false, error: message } });
+        } catch (recoveryError) {
+          if (generation !== this.generation) return;
+          this.update({ denoise: { ...this.snapshot.denoise, updating: false, error: message } });
+          this.failActiveSession(`${message}. Audio capture recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
+        }
+      }
+    });
+  }
+
+  /** Native approval is bound to a capture instance, so replace only /audio, retaining Result. */
+  private async replaceCapture(denoiseEnabled: boolean, generation: number): Promise<boolean> {
+    // Keep a pending Result reconnect; only an Audio retry is superseded by this replacement.
+    if (!this.socketsToReopen.has('result')) this.clearReconnectTimer();
+    this.closeSocket('audio');
+    const previousCapture = this.capture;
+    this.capture = null;
+    previousCapture?.stop();
+    this.captureStarted = false;
+    this.engineGate = 'closed';
+    const capture = await this.createCapture(denoiseEnabled);
+    if (generation !== this.generation) {
+      capture.stop();
+      return false;
+    }
+    this.capture = capture;
+    this.configureCapture(capture);
+    if (capture.getStatus().denoiseActive !== denoiseEnabled) throw new Error('The Audio SDK did not apply the requested denoise setting.');
+    if (!await this.openSocket('audio', this.snapshot.conversationId!)) {
+      if (generation !== this.generation) return false;
+      throw new Error('The replacement audio connection could not be authorized.');
+    }
+    if (generation !== this.generation) return false;
+    this.resumeAudio(generation);
+    if (generation !== this.generation) return false;
+    this.update({ denoise: { ...this.snapshot.denoise, applied: capture.getStatus().denoiseActive } });
+    return true;
+  }
+
+  private configureCapture(capture: MicrophoneCapture): void {
+    if (!capture.audioSdkReady) throw new Error('Audio SDK is required. Non-SDK audio capture is not supported.');
+    capture.setVadEnabled(false);
+    capture.onError((_error, detail) => {
+      if (this.capture === capture && !detail.recoverable) {
+        this.failActiveSession(`Audio capture failed: ${detail.message}`);
+      }
+    });
+  }
+
   isActive(): boolean {
     return !['idle', 'ended', 'error'].includes(this.snapshot.phase);
   }
@@ -175,7 +268,7 @@ export class RealtimeTranslationSession {
   }
 
   async start(input: StartConversationInput): Promise<void> {
-    if (this.isActive()) return;
+    if (this.isActive() || this.snapshot.denoise.updating) return;
     if (input.sourceLanguage === input.targetLanguage) {
       this.update({ error: 'Select two different languages.' });
       return;
@@ -183,36 +276,36 @@ export class RealtimeTranslationSession {
 
     const generation = ++this.generation;
     this.intentionalClose = false;
+    this.recording.reset();
     this.reconnectAttempt = 0;
     this.statusSequence = 0;
     this.desiredPaused = false;
     this.acceptingAudio = false;
-    this.clientVad = input.clientVad;
+    this.clientVad = false;
     this.engineGate = 'closed';
     this.update({
       phase: 'preparing-audio',
       rows: [],
       error: null,
       conversationId: null,
-      vad: input.clientVad ? sileroVadSnapshot(false) : disabledVadSnapshot(true),
+      audioSdkReady: false,
+      recordingAvailable: false,
+      denoise: { ...this.snapshot.denoise, applied: null, error: null },
+      vad: disabledVadSnapshot(true),
     });
 
     try {
-      const capture = await this.createCapture();
+      if (this.endpoints.audioSdkEnabled === false) throw new Error('Audio SDK is required. Enable audio-sdk before starting a session.');
+      const capture = await this.createCapture(this.snapshot.denoise.enabled);
       if (generation !== this.generation) {
         capture.stop();
         return;
       }
       this.capture = capture;
-      capture.setVadEnabled(input.clientVad);
-      capture.onError((_error, detail) => {
-        if (this.capture === capture && !detail.recoverable) {
-          this.failActiveSession(`Audio capture failed: ${detail.message}`);
-        }
-      });
+      this.configureCapture(capture);
       this.update({
         phase: 'creating',
-        vad: input.clientVad ? this.readVadSnapshot() : this.snapshot.vad,
+        audioSdkReady: true,
       });
 
       const conversationId = await this.api.createConversation();
@@ -221,7 +314,7 @@ export class RealtimeTranslationSession {
         return;
       }
       this.update({ phase: 'configuring', conversationId });
-      await this.api.saveInterpretationSettings(conversationId, input);
+      await this.api.saveInterpretationSettings(conversationId, { ...input, clientVad: false });
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
       // Result first: `/audio` is opened only after Result is ready. A socket that does not
@@ -250,6 +343,13 @@ export class RealtimeTranslationSession {
 
   /** `waitForResults: false` skips the waits for the last results, for when nobody is left to read them. */
   stop({ waitForResults = true } = {}): Promise<void> {
+    if (this.snapshot.denoise.updating) {
+      // Cancel pending replacement approval immediately rather than waiting for its timeout.
+      ++this.generation;
+      this.acceptingAudio = false;
+      this.closeSocket('audio');
+      this.update({ denoise: { ...this.snapshot.denoise, applied: null, updating: false } });
+    }
     return this.enqueueLifecycle(() => this.stopNow(waitForResults));
   }
 
@@ -357,6 +457,7 @@ export class RealtimeTranslationSession {
       this.failActiveSession(`Audio capture failed: ${error.message}`);
       return;
     }
+    this.recording.append(chunk);
     if (this.clientVad) {
       if (chunk.gateEvent === 'speech_gate_opened') this.engineGate = 'open';
       else if (chunk.gateEvent === 'speech_gate_closed') this.engineGate = 'closed';
@@ -465,6 +566,7 @@ export class RealtimeTranslationSession {
     if (!capture) throw new Error('Audio capture is unavailable.');
     capture.start((error, chunk) => this.handleChunk(capture, error, chunk));
     this.captureStarted = true;
+    this.update({ denoise: { ...this.snapshot.denoise, applied: capture.getStatus().denoiseActive } });
   }
 
   private settleOpen(kind: RealtimeSocket, usable: boolean): void {
@@ -578,7 +680,9 @@ export class RealtimeTranslationSession {
     // One attempt at a time: a later one must not replace a socket that an earlier one is
     // still opening.
     this.reconnectQueue = this.reconnectQueue
-      .then(() => this.reconnect())
+      .then(() => this.snapshot.denoise.updating
+        ? this.enqueueLifecycle(() => this.reconnect())
+        : this.reconnect())
       .catch((error) => this.failActiveSession(error instanceof Error ? error.message : String(error)));
   }
 
@@ -687,6 +791,7 @@ export class RealtimeTranslationSession {
     } catch {
       // The native capture is released either way.
     }
+    this.update({ audioSdkReady: false, recordingAvailable: this.recording.hasAudio, denoise: { ...this.snapshot.denoise, applied: null, updating: false } });
   }
 
   /** The server reported the end of the Conversation, so there is nothing left for `POST /end`. */

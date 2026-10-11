@@ -1,103 +1,67 @@
-const mockRecorderInstances: Array<{
-  audioCallbacks: Array<(event: any) => void>;
-  errorCallbacks: Array<(event: { message: string }) => void>;
-  events: string[];
-  startResult: { status: 'success' } | { status: 'error'; message: string };
-}> = [];
-
-jest.mock('react-native-permissions', () => ({
-  PERMISSIONS: { IOS: { MICROPHONE: 'ios.microphone' }, ANDROID: { RECORD_AUDIO: 'android.microphone' } },
-  RESULTS: { GRANTED: 'granted', LIMITED: 'limited' },
-  request: jest.fn(async () => 'granted'),
-}));
-
-jest.mock('react-native-audio-api', () => {
-  class MockAudioRecorder {
-    audioCallbacks: Array<(event: any) => void> = [];
-    errorCallbacks: Array<(event: { message: string }) => void> = [];
-    events: string[] = [];
-    startResult: { status: 'success' } | { status: 'error'; message: string } = { status: 'success' };
-
-    constructor() {
-      mockRecorderInstances.push(this);
-    }
-
-    onAudioReady(_options: unknown, callback: (event: any) => void) {
-      this.events.push('register-audio');
-      this.audioCallbacks.push(callback);
-      return { status: 'success' };
-    }
-    clearOnAudioReady() { this.events.push('clear-audio'); }
-    onError(callback: (event: { message: string }) => void) {
-      this.events.push('register-error');
-      this.errorCallbacks.push(callback);
-    }
-    clearOnError() { this.events.push('clear-error'); }
-    async start() { return this.startResult; }
-    pause() { this.events.push('pause'); }
-    resume() { this.events.push('resume'); }
-    async stop() { this.events.push('stop'); return { status: 'success' }; }
-  }
-
-  return {
-    AudioManager: {
-      setAudioSessionOptions: jest.fn(),
-      setAudioSessionActivity: jest.fn(async () => {}),
-    },
-    AudioRecorder: MockAudioRecorder,
-  };
-});
-
+import { AudioEngine } from '@tellus-ai/audio-sdk-mobile';
 import { NativeMicrophone } from '../src/audio/NativeMicrophone';
 
-function audioEvent(sampleCount: number) {
-  return {
-    buffer: {
-      sampleRate: 16_000,
-      getChannelData: () => new Float32Array(sampleCount),
-    },
-  };
-}
+jest.mock('@tellus-ai/audio-sdk-mobile', () => ({ AudioEngine: { init: jest.fn() } }));
+jest.mock('@tellus-ai/audio-sdk-mobile/authorization', () => ({ attachEngineAuthorization: jest.fn() }));
 
-describe('NativeMicrophone capture boundaries', () => {
-  beforeEach(() => {
-    mockRecorderInstances.length = 0;
+const capture = { getStatus: jest.fn(), setDenoiseEnabled: jest.fn(), stop: jest.fn(), dispose: jest.fn() };
+const createCapture = jest.fn(() => capture);
+const engine = { createCapture } as unknown as AudioEngine;
+const init = jest.mocked(AudioEngine.init);
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  init.mockResolvedValue(engine);
+  capture.getStatus.mockResolvedValue({ state: 'stopped', denoiseEnabled: true });
+});
+
+describe('mobile SDK denoise', () => {
+  it('applies a pre-start selection instead of the environment default', async () => {
+    const microphone = new NativeMicrophone();
+    await microphone.setDenoiseEnabled(false);
+    capture.getStatus.mockResolvedValue({ state: 'stopped', denoiseEnabled: false });
+    await microphone.prepare(false);
+    expect(init).toHaveBeenCalledWith(expect.objectContaining({ denoiseEnabled: false }));
+    expect(microphone.denoiseEnabled).toBe(false);
   });
 
-  it('invalidates paused callbacks and starts the resumed pipeline from a clean frame', async () => {
+  it('changes the existing SDK capture and reads its applied state without restarting it', async () => {
     const microphone = new NativeMicrophone();
-    const frames: unknown[] = [];
-    await microphone.start((frame) => frames.push(frame), () => {});
-    const recorder = mockRecorderInstances[0]!;
-    const staleCallback = recorder.audioCallbacks[0]!;
-
-    staleCallback(audioEvent(160));
-    await microphone.pause();
-    staleCallback(audioEvent(320));
-    await microphone.resume();
-    const resumedCallback = recorder.audioCallbacks[1]!;
-
-    staleCallback(audioEvent(320));
-    resumedCallback(audioEvent(160));
-    expect(frames).toHaveLength(0);
-    resumedCallback(audioEvent(160));
-    expect(frames).toHaveLength(1);
-    expect(recorder.events.indexOf('register-audio', 1)).toBeLessThan(recorder.events.indexOf('resume'));
+    await microphone.prepare(false);
+    capture.getStatus.mockResolvedValue({ state: 'running', denoiseEnabled: false });
+    await expect(microphone.setDenoiseEnabled(false)).resolves.toBe(false);
+    expect(capture.setDenoiseEnabled).toHaveBeenCalledWith(false);
+    expect(microphone.denoiseEnabled).toBe(false);
+    expect(init).toHaveBeenCalledTimes(1);
+    expect(capture.dispose).not.toHaveBeenCalled();
   });
 
-  it('forwards a recorder error once and ignores it after stop', async () => {
+  it('keeps the last setting when the SDK rejects the change', async () => {
     const microphone = new NativeMicrophone();
-    const errors: string[] = [];
-    await microphone.start(() => {}, (error) => errors.push(error.message));
-    const recorder = mockRecorderInstances[0]!;
-    const errorCallback = recorder.errorCallbacks[0]!;
+    await microphone.prepare(false);
+    capture.setDenoiseEnabled.mockRejectedValueOnce(new Error('model_not_ready'));
+    await expect(microphone.setDenoiseEnabled(false)).rejects.toThrow('model_not_ready');
+    expect(microphone.denoiseEnabled).toBe(true);
+  });
+});
 
-    errorCallback({ message: 'capture failed' });
-    errorCallback({ message: 'duplicate' });
+describe('required mobile Audio SDK', () => {
+  it('uses SDK capture with VAD disabled even when requested and clears usage on stop', async () => {
+    const microphone = new NativeMicrophone();
+    expect(microphone.audioSdkReady).toBe(false);
+    await microphone.prepare(true);
+    expect(init).toHaveBeenCalledWith(expect.objectContaining({ vadEnabled: false }));
+    expect(microphone.audioSdkReady).toBe(true);
     await microphone.stop();
-    errorCallback({ message: 'stale' });
+    expect(microphone.audioSdkReady).toBe(false);
+    expect(capture.dispose).toHaveBeenCalledTimes(1);
+  });
 
-    expect(errors).toEqual(['capture failed']);
-    expect(recorder.events).toEqual(expect.arrayContaining(['clear-audio', 'clear-error', 'stop']));
+  it('reports initialization failure without enabling SDK capture', async () => {
+    init.mockRejectedValueOnce(new Error('missing native module'));
+    const microphone = new NativeMicrophone();
+    await expect(microphone.prepare(false)).rejects.toThrow('Audio SDK is required but could not be initialized: missing native module');
+    expect(microphone.audioSdkReady).toBe(false);
+    expect(createCapture).not.toHaveBeenCalled();
   });
 });

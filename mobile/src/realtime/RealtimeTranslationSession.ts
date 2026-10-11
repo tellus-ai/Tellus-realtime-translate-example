@@ -8,16 +8,12 @@ import {
   type StartConversationInput,
 } from '../api/conversationApi';
 import type { MicrophoneRecorder } from '../audio/NativeMicrophone';
-import type { PcmAudioFrame } from '../audio/PcmFramePipeline';
-import {
-  ClientVadPipeline,
-  DISABLED_VAD_SNAPSHOT,
-  INITIAL_SILERO_VAD_SNAPSHOT,
-  SileroVadRuntime,
-  type VadDecision,
-  type VadGateEvent,
-  type VadRuntime,
-} from '../audio/VADClient';
+import { OggOpusRecording, type AudioRecordingFile } from '../audio/OggOpusRecording';
+import type { AudioChunk } from '@tellus-ai/audio-sdk-mobile';
+import type { VadSnapshot } from '../audio/VADTypes';
+
+const DISABLED_VAD_SNAPSHOT: VadSnapshot = { enabled: false, ready: false, mode: 'disabled', gate: 'closed' };
+const INITIAL_SILERO_VAD_SNAPSHOT: VadSnapshot = { ...DISABLED_VAD_SNAPSHOT, enabled: true, mode: 'silero' };
 import { decideSocketClose, STABLE_CONNECTION_MS, type RealtimeSocket, type SystemError } from './closePolicy';
 import { parseSocketMessage } from './resultParser';
 import { applyResultEvent, awaitsFinal } from './transcriptReducer';
@@ -37,8 +33,9 @@ type NativeWebSocketConstructor = new (
 interface PendingOpen { timeout: Timer; resolve(usable: boolean): void }
 
 export class RealtimeTranslationSession {
-  private snapshot: SessionSnapshot = { phase: 'idle', conversationId: null, resultConnection: 'closed', audioConnection: 'closed', rows: [], error: null, vad: DISABLED_VAD_SNAPSHOT };
+  private snapshot: SessionSnapshot = { phase: 'idle', conversationId: null, resultConnection: 'closed', audioConnection: 'closed', rows: [], audioSdkReady: false, recordingAvailable: false, denoise: { enabled: true, applied: null, updating: false, error: null }, error: null, vad: DISABLED_VAD_SNAPSHOT };
   private listeners = new Set<Listener>();
+  private recording = new OggOpusRecording();
   private sockets: Record<RealtimeSocket, WebSocket | null> = { result: null, audio: null };
   // The server explains an error close with a `system.error` just before it.
   private lastSocketError: Record<RealtimeSocket, SystemError | null> = { result: null, audio: null };
@@ -60,23 +57,14 @@ export class RealtimeTranslationSession {
   private desiredPaused = false;
   private lifecycleQueue: Promise<void> = Promise.resolve();
   private clientVad = false;
-  private lastVadUiUpdate = 0;
-  private readonly vadRuntime: VadRuntime;
-  private readonly vadPipeline: ClientVadPipeline;
+  private acceptingAudio = false;
+  private audioCloseTimer: Timer | null = null;
 
   constructor(
     private readonly endpoints: RealtimeEndpoints,
     private readonly microphone: MicrophoneRecorder,
     private readonly accessToken: string,
-    vadRuntime: VadRuntime = new SileroVadRuntime(),
-  ) {
-    this.vadRuntime = vadRuntime;
-    this.vadPipeline = new ClientVadPipeline(vadRuntime, {
-      onDecision: (decision) => this.updateVadSnapshot(decision),
-      onOutput: (frame, decision, sampleStart) => this.sendVadAudioFrame(frame, decision, sampleStart),
-      onFatal: (error) => this.failActiveSession(error.message),
-    });
-  }
+  ) { this.snapshot.denoise.enabled = microphone.denoiseEnabled; }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -84,52 +72,78 @@ export class RealtimeTranslationSession {
   }
   getSnapshot(): SessionSnapshot { return this.snapshot; }
 
+  getRecording(): AudioRecordingFile {
+    if (!['idle', 'ended', 'error'].includes(this.snapshot.phase)) throw new Error('Stop the session before downloading audio.');
+    return this.recording.getFile();
+  }
+
+  setDenoiseEnabled(enabled: boolean): Promise<void> {
+    if (this.endpoints.audioSdkEnabled === false || this.snapshot.denoise.updating ||
+        !['idle', 'ended', 'error', 'recording', 'paused'].includes(this.snapshot.phase)) return Promise.resolve();
+    const generation = this.generation;
+    this.update({ denoise: { ...this.snapshot.denoise, updating: true, error: null } });
+    return this.enqueueLifecycle(async () => {
+      try {
+        const applied = await this.microphone.setDenoiseEnabled(enabled);
+        if (generation === this.generation) this.update({ denoise: {
+          enabled: applied, applied: this.snapshot.audioSdkReady ? applied : null, updating: false, error: null,
+        } });
+      } catch (error) {
+        if (generation === this.generation) this.update({ denoise: {
+          ...this.snapshot.denoise, updating: false,
+          error: `Unable to change Audio SDK denoise: ${error instanceof Error ? error.message : String(error)}`,
+        } });
+      }
+    });
+  }
+
   async start(input: StartConversationInput): Promise<void> {
     if (!this.accessToken) throw new Error('Set the API_KEY environment variable.');
     if (!input.sourceLanguage || !input.targetLanguage) throw new Error('Select two languages.');
     if (input.sourceLanguage === input.targetLanguage) throw new Error('Select two different languages.');
-    if (!['idle', 'ended', 'error'].includes(this.snapshot.phase)) return;
+    if (!['idle', 'ended', 'error'].includes(this.snapshot.phase) || this.snapshot.denoise.updating) return;
     const generation = ++this.generation;
     this.intentionalClose = false;
+    this.recording.reset();
     this.reconnectAttempt = 0;
     this.sampleCursor = 0;
     this.statusSequence = 0;
     this.desiredPaused = false;
-    this.clientVad = input.clientVad;
-    this.lastVadUiUpdate = 0;
-    this.vadPipeline.reset(0);
+    this.clientVad = false;
+    this.acceptingAudio = false;
     this.update({
       phase: 'creating',
       rows: [],
       error: null,
       conversationId: null,
-      vad: input.clientVad ? INITIAL_SILERO_VAD_SNAPSHOT : DISABLED_VAD_SNAPSHOT,
+      audioSdkReady: false,
+      recordingAvailable: false,
+      denoise: { ...this.snapshot.denoise, applied: null, error: null },
+      vad: DISABLED_VAD_SNAPSHOT,
     });
     try {
-      await Promise.all([
-        this.microphone.prepare(),
-        input.clientVad ? this.vadRuntime.initialize() : Promise.resolve(),
-      ]);
+      if (this.endpoints.audioSdkEnabled === false) throw new Error('Audio SDK is required. Enable audio-sdk before starting a session.');
+      await this.microphone.prepare(false);
       if (generation !== this.generation) return;
-      if (input.clientVad) {
-        this.update({ vad: { ...INITIAL_SILERO_VAD_SNAPSHOT, ready: true } });
-      }
+      if (!this.microphone.audioSdkReady) throw new Error('Audio SDK is required. Non-SDK audio capture is not supported.');
+      this.update({ audioSdkReady: true, denoise: { ...this.snapshot.denoise, applied: this.microphone.denoiseEnabled } });
       const conversationId = await createConversation(this.endpoints, this.accessToken);
       if (generation !== this.generation) {
         await endConversation(this.endpoints, this.accessToken, conversationId).catch(() => {});
         return;
       }
       this.update({ phase: 'configuring', conversationId });
-      await saveInterpretationSettings(this.endpoints, this.accessToken, conversationId, input.sourceLanguage, input.targetLanguage, input.clientVad);
+      await saveInterpretationSettings(this.endpoints, this.accessToken, conversationId, input.sourceLanguage, input.targetLanguage, false);
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
       // Result first: `/audio` is opened only after Result is ready. A socket that does not
       // become usable has already failed the start in `handleSocketClose`.
       if (!await this.openSocket('result', conversationId) || generation !== this.generation) return;
       if (!await this.openSocket('audio', conversationId) || generation !== this.generation) return;
-      this.resetAudioStream(false);
+      this.resetAudioStream();
       this.sendAudioStatus('capturing');
       this.update({ phase: 'recording' });
+      this.acceptingAudio = true;
       await this.microphone.start(
         (frame) => this.handleAudioFrame(frame),
         (error) => {
@@ -167,14 +181,12 @@ export class RealtimeTranslationSession {
     if (this.snapshot.phase !== 'recording') return;
     const generation = this.generation;
     this.desiredPaused = true;
+    this.acceptingAudio = false;
     try {
       await this.microphone.pause();
       if (generation !== this.generation || this.snapshot.phase !== 'recording') return;
       if (this.clientVad) {
-        await this.vadPipeline.drain();
-        if (generation !== this.generation || this.snapshot.phase !== 'recording') return;
         this.closeOpenVadGate('capturing');
-        this.vadPipeline.reset(this.sampleCursor);
         this.update({ vad: { ...INITIAL_SILERO_VAD_SNAPSHOT, ready: true } });
       }
       this.sendAudioStatus('paused');
@@ -191,11 +203,11 @@ export class RealtimeTranslationSession {
     const generation = this.generation;
     this.desiredPaused = false;
     if (this.clientVad) {
-      this.vadPipeline.reset(this.sampleCursor);
       this.update({ vad: { ...INITIAL_SILERO_VAD_SNAPSHOT, ready: true } });
     }
     this.sendAudioStatus('capturing');
     this.update({ phase: 'recording' });
+    this.acceptingAudio = true;
     try {
       await this.microphone.resume();
     } catch (error) {
@@ -220,11 +232,10 @@ export class RealtimeTranslationSession {
     ++this.generation;
     this.intentionalClose = true;
     this.update({ phase: 'stopping' });
-    await this.microphone.pause().catch(() => {});
-    if (this.clientVad) {
-      await this.vadPipeline.drain().catch(() => {});
-      this.closeOpenVadGate('capturing');
-    }
+    await this.microphone.stop().catch(() => {});
+    this.update({ audioSdkReady: false, denoise: { ...this.snapshot.denoise, applied: null, updating: false } });
+    this.acceptingAudio = false;
+    if (this.clientVad) this.closeOpenVadGate('capturing');
     this.sendAudioStatus('idle');
     const conversationId = this.snapshot.conversationId;
     // The statuses above make the server finish the last utterance; its finals arrive on Result.
@@ -271,7 +282,7 @@ export class RealtimeTranslationSession {
     // reject it right after with `system.error` and a close.
     socket.onopen = () => {
       this.setConnection(kind, 'open');
-      if (kind === 'audio') this.settleOpen(kind, true);
+      if (kind === 'audio') clearTimeout(this.pendingOpen.audio?.timeout);
     };
     socket.onmessage = (event) => this.handleSocketMessage(kind, event.data);
     socket.onerror = () => this.setConnection(kind, 'error');
@@ -282,6 +293,14 @@ export class RealtimeTranslationSession {
       // No answer in time is handled like a connection lost without a close frame.
       const timeout = setTimeout(() => this.handleSocketClose(kind, 1006, ''), SOCKET_OPEN_TIMEOUT);
       this.pendingOpen[kind] = { timeout, resolve };
+      if (kind === 'audio') {
+        const onError = (error: Error) => {
+          if (socket === this.sockets.audio && !this.intentionalClose) this.handleAuthorizationError(error);
+        };
+        void this.microphone.authorize(socket, conversationId, this.accessToken, onError).then(() => {
+          if (socket === this.sockets.audio && this.audioCloseTimer === null) this.settleOpen('audio', true);
+        }, onError);
+      }
     });
   }
   private settleOpen(kind: RealtimeSocket, usable: boolean): void {
@@ -298,6 +317,12 @@ export class RealtimeTranslationSession {
     if (!socket) return;
     this.sockets[kind] = null;
     this.settleOpen(kind, false);
+    if (kind === 'audio') {
+      this.acceptingAudio = false;
+      this.microphone.releaseAuthorization();
+      if (this.audioCloseTimer !== null) clearTimeout(this.audioCloseTimer);
+      this.audioCloseTimer = null;
+    }
     socket.onopen = null;
     socket.onmessage = null;
     socket.onclose = null;
@@ -358,10 +383,9 @@ export class RealtimeTranslationSession {
     });
   }
   private async prepareForReconnect(): Promise<void> {
+    this.acceptingAudio = false;
     await this.microphone.pause().catch(() => {});
     if (this.intentionalClose || !this.clientVad) return;
-    // The stream is discontinuous. Cancel queued inference rather than attaching old PCM to the new socket.
-    this.vadPipeline.reset(0);
     this.update({ vad: { ...INITIAL_SILERO_VAD_SNAPSHOT, ready: true } });
   }
   private reconnectNow(): void {
@@ -397,10 +421,9 @@ export class RealtimeTranslationSession {
     this.stableTimer = setTimeout(() => { this.stableTimer = null; this.reconnectAttempt = 0; }, STABLE_CONNECTION_MS);
   }
   /** A new `/audio` socket counts samples from 0 again, with a closed VAD gate. */
-  private resetAudioStream(resetVadRuntime = true): void {
+  private resetAudioStream(): void {
     this.sampleCursor = 0;
     if (!this.clientVad) return;
-    this.vadPipeline.reset(0, resetVadRuntime);
     this.update({ vad: { ...INITIAL_SILERO_VAD_SNAPSHOT, ready: true } });
   }
   private async resumeAudio(generation: number): Promise<void> {
@@ -410,44 +433,42 @@ export class RealtimeTranslationSession {
     this.sendAudioStatus(this.desiredPaused ? 'paused' : 'capturing');
     this.update({ phase: this.desiredPaused ? 'paused' : 'recording' });
     if (this.desiredPaused) return;
+    this.acceptingAudio = true;
     await this.microphone.resume();
     // Stop, Pause, or another close arrived while the microphone was resuming.
     if (this.intentionalClose || generation !== this.generation || this.snapshot.phase !== 'recording') await this.microphone.pause().catch(() => {});
   }
-  private handleAudioFrame(frame: PcmAudioFrame): void {
-    if (this.snapshot.phase !== 'recording' || this.sockets.audio?.readyState !== WebSocket.OPEN) return;
-    if (this.clientVad) this.vadPipeline.enqueue(frame);
-    else this.sendAudioFrame(frame.pcm16, frame.sampleCount);
-  }
-  private sendAudioFrame(frame: ArrayBuffer, sampleCount: number): void {
-    if (this.snapshot.phase !== 'recording' || this.sockets.audio?.readyState !== WebSocket.OPEN) return;
-    this.sockets.audio.send(frame);
-    this.sampleCursor += sampleCount;
-  }
-  private sendVadAudioFrame(frame: PcmAudioFrame, decision: VadDecision, sampleStart: number): void {
-    if (!['recording', 'stopping'].includes(this.snapshot.phase) || this.sockets.audio?.readyState !== WebSocket.OPEN) return;
-    if (sampleStart !== this.sampleCursor) {
-      this.failActiveSession('VAD audio sample cursor mismatch.');
-      return;
+  private handleAudioFrame(chunk: AudioChunk): void {
+    if (!['idle', 'ended', 'error'].includes(this.snapshot.phase)) this.recording.append(chunk);
+    if (!this.acceptingAudio || !['recording', 'stopping'].includes(this.snapshot.phase)) return;
+    const socket = this.sockets.audio;
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    if (this.clientVad && (chunk.gateEvent === 'speech_gate_opened' || chunk.gateEvent === 'speech_gate_closed')) {
+      const open = chunk.gateEvent === 'speech_gate_opened';
+      this.update({ vad: { ...this.snapshot.vad, gate: open ? 'open' : 'closed' } });
+      this.sendAudioStatus('capturing', chunk.gateEvent);
     }
-    if (decision.event) this.sendAudioStatus('capturing', decision, decision.event, sampleStart);
-    if (this.sockets.audio?.readyState !== WebSocket.OPEN || !['recording', 'stopping'].includes(this.snapshot.phase)) return;
-    this.sockets.audio.send(frame.pcm16);
-    this.sampleCursor = sampleStart + frame.sampleCount;
+    const payload = chunk.data.microphone;
+    if (!payload?.length) return;
+    socket.send(payload.slice().buffer);
+    this.sampleCursor += chunk.sampleCount;
   }
-  private sendAudioStatus(
-    state: 'capturing' | 'paused' | 'idle',
-    decision?: VadDecision,
-    event?: VadGateEvent,
-    sample = this.sampleCursor,
-  ): void {
+
+  private sendAudioStatus(state: 'capturing' | 'paused' | 'idle', event?: string): void {
     if (this.sockets.audio?.readyState !== WebSocket.OPEN) return;
     this.statusSequence += 1;
-    const vad = {
-      enabled: decision?.enabled ?? this.clientVad,
-      ...(event ? { event } : {}),
-    };
-    this.sockets.audio.send(JSON.stringify({ type: 'audio.status', version: 1, status_seq: this.statusSequence, boundary_sample: sample, mic: { state }, vad }));
+    this.sockets.audio.send(JSON.stringify({ type: 'audio.status', version: 1,
+      status_seq: this.statusSequence, boundary_sample: this.sampleCursor, mic: { state },
+      vad: { enabled: this.clientVad, ...(event ? { event } : {}) } }));
+  }
+
+  private handleAuthorizationError(error: Error): void {
+    if (['engine_authorization_connection_closed', 'engine_authorization_connection_failed', 'engine_authorization_server_error'].includes(error.message)) {
+      this.acceptingAudio = false;
+      this.audioCloseTimer ??= setTimeout(() => this.handleSocketClose('audio', 1006, ''), SOCKET_OPEN_TIMEOUT);
+    } else if (['engine_authorization_timeout', 'engine_authorization_expired'].includes(error.message)) {
+      this.handleSocketClose('audio', 1006, '');
+    } else this.failActiveSession(error.message);
   }
   /** Stop keeps the Result socket for the last results and `conversation.ended`. */
   private async cleanupLocal({ keepResultSocket = false } = {}): Promise<void> {
@@ -458,10 +479,8 @@ export class RealtimeTranslationSession {
     // The sockets go first, so that no event arrives while the rest is released.
     this.closeSocket('audio');
     if (!keepResultSocket) this.closeSocket('result');
-    this.vadPipeline.reset(this.sampleCursor);
     await this.microphone.stop().catch(() => {});
-    await this.vadPipeline.drain().catch(() => {});
-    if (this.clientVad) await this.vadRuntime.dispose().catch(() => {});
+    this.update({ audioSdkReady: false, recordingAvailable: this.recording.hasAudio });
   }
   private enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
     const result = this.lifecycleQueue.then(operation);
@@ -470,18 +489,10 @@ export class RealtimeTranslationSession {
   }
   private closeOpenVadGate(micState: 'capturing' | 'paused'): void {
     if (!this.clientVad || this.snapshot.vad.gate !== 'open') return;
-    const decision: VadDecision = {
-      ...this.snapshot.vad,
-      gate: 'closed',
-      probability: 0,
-      isSpeech: false,
-      level: 'off',
-      rms: 0,
-      event: 'speech_gate_closed',
-    };
-    this.sendAudioStatus(micState, decision, decision.event, this.sampleCursor);
-    this.updateVadSnapshot(decision);
+    this.sendAudioStatus(micState, 'speech_gate_closed');
+    this.update({ vad: { ...this.snapshot.vad, gate: 'closed' } });
   }
+
   /** The server reported the end of the Conversation, so there is nothing left for `POST /end`. */
   private finishEnded(): void {
     this.intentionalClose = true;
@@ -511,13 +522,6 @@ export class RealtimeTranslationSession {
   private clearStableTimer(): void {
     if (this.stableTimer !== null) clearTimeout(this.stableTimer);
     this.stableTimer = null;
-  }
-  private updateVadSnapshot(decision: VadDecision): void {
-    const now = Date.now();
-    if (!decision.event && now - this.lastVadUiUpdate < 100) return;
-    this.lastVadUiUpdate = now;
-    const { rms: _rms, event: _event, ...vad } = decision;
-    this.update({ vad });
   }
   private update(patch: Partial<SessionSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch };

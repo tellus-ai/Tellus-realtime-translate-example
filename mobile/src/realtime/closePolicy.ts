@@ -46,11 +46,14 @@ export function reconnectDelayMs(attempt: number): number {
 }
 
 export function decideSocketClose(close: SocketClose): CloseDecision {
-  const reason = close.reason || close.lastError?.reason || null;
+  // iOS can report a generic stream end instead of the server's close frame.
+  // The preceding system.error preserves the intended code and rejection reason.
+  const code = close.lastError?.code ?? close.code;
+  const reason = close.lastError?.reason || close.reason || null;
 
-  if (close.code === 1000) return { action: 'ended', reason };
+  if (code === 1000) return { action: 'ended', reason };
 
-  if (close.code === 1008) {
+  if (code === 1008) {
     if (reason !== null && ENDED_REASONS.has(reason)) return { action: 'ended', reason };
     if (reason === REPLACED_REASON) {
       return {
@@ -65,7 +68,7 @@ export function decideSocketClose(close: SocketClose): CloseDecision {
   }
 
   // 1012 is a server restart: spread the first reconnect so clients do not return at once.
-  if (close.code === 1012 && close.attempt === 0) {
+  if (code === 1012 && close.attempt === 0) {
     const random = close.random ?? Math.random;
     return { action: 'reconnect', reason, delayMs: 500 + Math.floor(random() * 1_500) };
   }
@@ -76,6 +79,9 @@ export function decideSocketClose(close: SocketClose): CloseDecision {
 }
 
 function describeRejection(close: SocketClose, reason: string | null): string {
+  if (reason === 'engine_authentication_invalid') {
+    return 'Audio engine authorization was rejected (1008: engine_authentication_invalid). Check that the server supports this SDK\'s authorization request and model-key protocol.';
+  }
   const message = close.lastError?.message;
   if (message) return reason ? `${message} (${reason})` : message;
   return `The server refused the connection. (${reason ?? close.code})`;
