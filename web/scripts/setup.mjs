@@ -1,3 +1,4 @@
+import { prepareSdk } from './prepare-sdk.mjs';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,7 @@ const installationToken = env.TELLUS_AUDIO_ENGINE_TOKEN;
 try {
   if (!installationToken) throw new Error('Set TELLUS_AUDIO_ENGINE_TOKEN to your Tellus-issued installation token in web/.env. API_KEY is only for runtime login.');
   if (!process.env.npm_execpath) throw new Error('Run this script with npm run setup.');
+  prepareSdk(root, { ...env, TELLUS_AUDIO_ENGINE_TOKEN: installationToken, TELLUS_AUDIO_DOWNLOAD_BASE_URL: baseUrl }, process.env.npm_execpath);
   console.log('Installing SDK, the web engine, and encrypted models...');
   // Run the SDK installer explicitly even when npm lifecycle scripts are disabled.
   for (const args of [
@@ -29,5 +31,5 @@ try {
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : 'SDK setup failed.');
-  process.exitCode = 1;
+  process.exitCode = Number.isInteger(error.status) && error.status > 0 ? error.status : 1;
 }

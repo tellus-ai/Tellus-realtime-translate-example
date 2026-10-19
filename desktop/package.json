@@ -23,7 +23,7 @@
     "test:engine-local": "node scripts/engine-local-smoke.mjs"
   },
   "dependencies": {
-    "@tellus-ai/audio-sdk-desktop": "file:../../tellus-audio-sdk/platforms/desktop",
+    "@tellus-ai/audio-sdk-desktop": "file:.sdk/platforms/desktop",
     "ws": "^8.21.3"
   },
   "devDependencies": {

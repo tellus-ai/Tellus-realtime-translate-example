@@ -1,5 +1,5 @@
 import { loadEnv } from 'vite';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { createRecordingDownloadMiddleware } from './scripts/recording-download-middleware.cjs';
 
@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
     }],
     test: {
       environment: 'node',
+      exclude: [...configDefaults.exclude, '**/.sdk/**'],
     },
   };
 });
