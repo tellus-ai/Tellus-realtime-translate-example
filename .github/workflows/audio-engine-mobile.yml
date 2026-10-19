@@ -2,7 +2,17 @@ name: React Native SDK and real mobile pipeline
 
 on:
   pull_request:
-    paths: ['mobile/**', '.github/workflows/audio-engine-mobile.yml']
+    paths:
+      - 'mobile/**'
+      - 'web/scripts/*sdk*'
+      - 'web/scripts/setup.mjs'
+      - 'web/tests/setup.test.mjs'
+      - 'web/package*.json'
+      - 'desktop/scripts/*sdk*'
+      - 'desktop/scripts/setup.mjs'
+      - 'desktop/package*.json'
+      - 'tests/setup-sdk.test.mjs'
+      - '.github/workflows/audio-engine-mobile.yml'
   workflow_dispatch:
     inputs:
       engine_ref:
@@ -121,11 +131,15 @@ jobs:
           npm run check:js
           npm run check:package
           npm audit --omit=dev --audit-level=high
-          cd ../Tellus-realtime-translate-example/mobile
+          cd ../Tellus-realtime-translate-example
+          node --test tests/setup-sdk.test.mjs
+          cd mobile
+          ln -s ../../tellus-audio-sdk .sdk
           npm ci --ignore-scripts --legacy-peer-deps
           cp -R ../../tellus-audio-sdk/platforms/mobile/vendor node_modules/@tellus-ai/audio-sdk-mobile/
           npm run verify:pre-commit
           cd ../web
+          ln -s ../../tellus-audio-sdk .sdk
           npm ci --ignore-scripts
       - name: Generate fresh Expo host with the SDK plugin
         working-directory: Tellus-realtime-translate-example/mobile
