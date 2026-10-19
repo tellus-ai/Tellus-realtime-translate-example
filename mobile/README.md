@@ -1,6 +1,6 @@
 # 모바일 실시간 번역 예제
 
-Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile` 0.2.3이 OS 캡처, Rust DSP·FastEnhancer·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/audio`로 전달한다.
+Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile` 0.2.5가 OS 캡처, Rust DSP·FastEnhancer·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/audio`로 전달한다.
 
 ```sh
 cp .env.example .env
@@ -10,17 +10,15 @@ npm run ios
 # 또는 npm run android
 ```
 
-`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 런타임 로그인용이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정하며, 없으면 `REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, staging 기본 주소 순서로 선택한다.
+`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인하고 공개 SDK 0.2.5의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 런타임 로그인용이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정하며, 없으면 `REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, staging 기본 주소 순서로 선택한다.
 
 `./dev.sh [start|ios|android]`도 SDK 또는 엔진 파일이 없으면 같은 setup을 실행한다. setup 이후 `npm run ios` 또는 `npm run android`로 SDK가 포함된 개발 앱을 빌드한다.
 
-현재 workspace는 `../../tellus-audio-sdk/platforms/mobile`의 SDK 0.2.3을 사용한다. `.npmrc`의 `install-links=true`로 앱의 `node_modules`에 복사 설치한다. SDK installer가 플랫폼 binary와 `fe-s16.temc`, `fe-s48.temc`, `silero-vad.temc` 암호화 모델을 준비해야 한다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 오디오 캡처 구현은 SDK에 위임하며 고객 앱에서는 React Native TypeScript API를 사용한다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
+Node.js 24와 Git이 필요하며 별도 SDK 폴더를 준비할 필요가 없다. `.sdk/platforms/mobile`의 SDK 0.2.5와 엔진 0.3.4를 사용한다. `.npmrc`의 `install-links=true`로 앱의 `node_modules`에 복사 설치한다. SDK installer가 플랫폼 binary와 `fe-s16.temc`, `fe-s48.temc`, `silero-vad.temc` 암호화 모델을 준비해야 한다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 오디오 캡처 구현은 SDK에 위임하며 고객 앱에서는 React Native TypeScript API를 사용한다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
 
-sibling SDK의 `vendor`에 iOS·Android 바이너리와 모델이 이미 준비되어 있으면 다운로드 없이 로컬 설치할 수 있다. 설치 후 iOS Pods를 갱신하고 앱을 다시 빌드한다.
+`.sdk/`는 setup이 관리하는 로컬 빌드 캐시다. 다른 SDK 버전이 들어 있으면 삭제 후 `npm run setup`을 다시 실행한다. SDK를 갱신한 뒤 기존 iOS host를 사용하는 경우 Pods를 갱신하고 앱을 다시 빌드한다.
 
 ```sh
-npm ci --ignore-scripts --legacy-peer-deps
-cp -R ../../tellus-audio-sdk/platforms/mobile/vendor node_modules/@tellus-ai/audio-sdk-mobile/
 (cd ios && pod install --no-repo-update)
 npm run ios
 # 또는 npm run android

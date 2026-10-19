@@ -10,7 +10,7 @@ REST and WebSocket contracts used by this example.
 
 ## Run
 
-Use Node.js 24. Install with the setup command before running the app:
+Use Node.js 24 and Git. Install with the setup command before running the app:
 
 ```bash
 cp .env.example .env   # set TELLUS_AUDIO_ENGINE_TOKEN (installation) and API_KEY (runtime login)
@@ -24,16 +24,15 @@ You can also use the development script, which checks `.env` first.
 ./dev.sh
 ```
 
-`npm run setup` installs SDK **0.2.3** from the sibling `../../tellus-audio-sdk/platforms/desktop`
-package, with its version recorded in `package-lock.json`. The SDK installer uses the existing customer installation token to request
-file-specific download tokens for native engine **0.3.2** and its checksum from
+`npm run setup` downloads the public SDK **0.2.5** source into this example's `.sdk/` directory, verifies the commit pinned in `scripts/audio-sdk-release.json`, and builds its JavaScript packages. It then installs `.sdk/platforms/desktop`, with its version recorded in `package-lock.json`. No sibling SDK checkout, engine source, Rust build, or GitHub credentials are required. The SDK installer uses the existing customer installation token to request
+file-specific download tokens for native engine **0.3.4** and its checksum from
 `TELLUS_AUDIO_DOWNLOAD_BASE_URL` (staging by default), then
 downloads the engine files from `https://download.tellus.ai.kr` and verifies SHA-256. Login and download
 tokens are kept out of package URLs, the lockfile, and logs. A CDN `401` gets one fresh grant and one retry.
 
 The token API must be deployed on the selected Realtime Speech server. Its environment prefix must
 contain the native engine archive for your platform and its `.sha256` file.
-For staging this is `stg/audio/engine/v0.3.2/`. A missing API returns
+For staging this is `stg/audio/engine/v0.3.4/`. A missing API returns
 `404`; a missing artifact or invalid installation token must be resolved before setup can finish.
 
 `TELLUS_AUDIO_ENGINE_TOKEN` is the existing Tellus-issued customer installation token. Installation
@@ -259,18 +258,7 @@ npm test
 npm run build
 ```
 
-현재 개발 후보는 sibling `../../tellus-audio-sdk/platforms/desktop`의 SDK 0.2.3을 사용한다.
-`.npmrc`의 `install-links=true`로 SDK를 앱의 `node_modules`에 복사 설치한다. 같은 엔진 후보의
-universal NAPI와 ORT/models가 sibling SDK의 `vendor/darwin-universal`에 준비되어 있으면
-다음 명령으로 다운로드 없이 로컬 설치할 수 있다.
-
-```bash
-npm ci --ignore-scripts
-node node_modules/electron/install.js
-cp -R ../../tellus-audio-sdk/platforms/desktop/vendor node_modules/@tellus-ai/audio-sdk-desktop/
-node node_modules/@tellus-ai/audio-sdk-desktop/dist/installer/check-binary-cli.js
-npm run build
-```
+`.npmrc`의 `install-links=true`로 `.sdk/platforms/desktop`의 SDK 0.2.5를 앱의 `node_modules`에 복사 설치한다. `.sdk/`는 setup이 관리하는 로컬 빌드 캐시이며 다른 SDK 버전이 들어 있으면 삭제 후 `npm run setup`을 다시 실행한다.
 
 공개 테스트 서명 키를 신뢰하도록 빌드한 테스트 바이너리에서 다음 명령은 원격 API를 호출하지 않는다.
 
