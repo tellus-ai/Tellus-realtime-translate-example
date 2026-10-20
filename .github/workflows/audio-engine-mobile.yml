@@ -32,6 +32,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  setup-tests:
+    name: Standalone SDK setup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test standalone installation with local SDK fixtures
+        run: node --test tests/setup-sdk.test.mjs mobile/scripts/setup.test.mjs
+
   native-artifacts:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: macos-15
@@ -42,13 +54,25 @@ jobs:
       TELLUS_ENGINE_TEST_LICENSE: '1'
       TELLUS_MODEL_CONTENT_KEY: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
     steps:
+      - name: Check private engine repository credentials
+        env:
+          GH_TOKEN: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Set the TELLUS_CI_REPOSITORY_TOKEN Actions secret with Contents: read access to tellus-ai/Tellus-audio-engine. GITHUB_TOKEN only grants access to this example repository."
+            exit 1
+          fi
+          if ! gh api repos/tellus-ai/Tellus-audio-engine/contents/package.json --silent; then
+            echo "::error::TELLUS_CI_REPOSITORY_TOKEN cannot read tellus-ai/Tellus-audio-engine. Check its repository access, Contents: read permission, and organization approval."
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           repository: tellus-ai/Tellus-audio-engine
           ref: ${{ inputs.engine_ref || 'main' }}
           path: Tellus-audio-engine
           lfs: true
-          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN || github.token }}
+          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -105,13 +129,12 @@ jobs:
           repository: tellus-ai/tellus-audio-sdk
           ref: ${{ inputs.sdk_ref || 'main' }}
           path: tellus-audio-sdk
-          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN || github.token }}
       - uses: actions/checkout@v4
         with:
           repository: tellus-ai/Tellus-audio-engine
           ref: ${{ inputs.engine_ref || 'main' }}
           path: Tellus-audio-engine
-          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN || github.token }}
+          token: ${{ secrets.TELLUS_CI_REPOSITORY_TOKEN }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -132,7 +155,6 @@ jobs:
           npm run check:package
           npm audit --omit=dev --audit-level=high
           cd ../Tellus-realtime-translate-example
-          node --test tests/setup-sdk.test.mjs
           cd mobile
           ln -s ../../tellus-audio-sdk .sdk
           npm ci --ignore-scripts --legacy-peer-deps

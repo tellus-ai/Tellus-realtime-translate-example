@@ -57,7 +57,11 @@ TELLUS_ENGINE_TEST_LICENSE=1 METRO_URL=http://localhost:8088 node scripts/native
 Android에서는 `adb reverse tcp:8088 tcp:8088`을 설정하고 `ANDROID_SERIAL=emulator-5554`를 추가한다. probe가 테스트 승인 서버의 임시 포트도 자동으로 reverse한다. 승인 전 시작 거부, FE·VAD 모델 로드, 합성 재생 완료·취소, pause/reset/reconnect/stop-start, 정지 상태의 native 승인 만료를 검증한다. Android에서는 만료된 마이크 foreground service가 종료되었는지도 확인한다.
 
 
-`.github/workflows/audio-engine-mobile.yml`은 같은 workflow의 선행 job에서 테스트용 engine artifact를 만든 뒤, SDK 전체 게이트·예제 타입/Jest·fresh Expo prebuild·실제 iOS Simulator/Android Emulator probe를 실행한다. private engine/SDK checkout에는 `TELLUS_CI_REPOSITORY_TOKEN`을 저장소 secret으로 설정하고, 수동 실행의 `engine_ref`/`sdk_ref`로 검증할 revision을 지정한다. 이 작업에서는 원격 CI를 실행하지 않는다. `eas.json`은 로컬 검토용 Debug 개발 프로필을 준비하며 EAS 서명·배포는 수행하지 않는다.
+`.github/workflows/audio-engine-mobile.yml`은 PR과 수동 실행에서 Web·Mobile·Desktop 설치 회귀 테스트를 별도 job으로 실행한다. 이 테스트는 로컬 SDK fixture를 사용하므로 비공개 저장소나 설치 토큰이 필요 없다. 같은 저장소의 PR과 수동 실행에서는 테스트용 engine artifact를 만든 뒤 SDK 전체 게이트·예제 타입/Jest·fresh Expo prebuild·실제 iOS Simulator/Android Emulator probe도 실행한다.
+
+네이티브 검증에는 비공개 `tellus-ai/Tellus-audio-engine` 저장소를 읽을 수 있는 CI용 토큰이 필요하다. 예제 저장소의 **Settings → Secrets and variables → Actions → New repository secret**에서 `TELLUS_CI_REPOSITORY_TOKEN`을 등록한다. Fine-grained PAT를 사용할 경우 resource owner는 `tellus-ai`, 대상 저장소는 `Tellus-audio-engine`, repository permission은 **Contents: Read-only**로 설정하고 조직 승인이 필요하면 승인까지 완료한다. 기본 `GITHUB_TOKEN`은 예제 저장소에만 접근할 수 있으므로 대신 사용할 수 없다. 공개 SDK checkout에는 별도 토큰이 필요 없다. 토큰 등록 후 실패한 workflow를 다시 실행한다. 수동 실행에서는 `engine_ref`/`sdk_ref`로 검증할 revision을 지정한다.
+
+`eas.json`은 로컬 검토용 Debug 개발 프로필을 준비하며 EAS 서명·배포는 수행하지 않는다.
 
 ## 로컬 캡처 음성 다운로드
 
