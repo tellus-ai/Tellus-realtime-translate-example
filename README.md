@@ -17,7 +17,7 @@ Each app reads `API_KEY` from its local `.env` file and uses it in the
 
 ## 플랫폼별 SDK 설치
 
-각 예제는 필요한 플랫폼 SDK **0.2.3**만 설치합니다. 개발 의존성은 sibling SDK 저장소의 `platforms/web`, `platforms/mobile`, `platforms/desktop`을 사용합니다. 각 예제의 `.npmrc`에 `install-links=true`를 설정해 SDK를 해당 앱의 `node_modules`에 복사 설치합니다. SDK 0.2.3의 release manifest는 엔진 **0.3.2**를 지정합니다.
+각 예제는 `npm run setup`으로 필요한 플랫폼 SDK **0.2.5**와 엔진 **0.3.4**를 설치합니다. Node.js 24와 Git이 필요합니다. 별도 SDK 저장소나 엔진 소스를 직접 준비할 필요가 없습니다.
 
 | 예제 | 설치 패키지 |
 | --- | --- |
@@ -25,12 +25,19 @@ Each app reads `API_KEY` from its local `.env` file and uses it in the
 | 모바일 | `@tellus-ai/audio-sdk-mobile` |
 | 데스크톱 | `@tellus-ai/audio-sdk-desktop` |
 
-엔진 또는 SDK 구현을 변경했으면 예제를 실행하기 전에 산출물을 갱신하고 예제 의존성을 다시 설치합니다. 플랫폼 바이너리와 암호화 모델은 해당 SDK 패키지의 installer로 준비합니다. 이미 준비한 로컬 `vendor` 자산을 사용하는 설치 방법은 각 예제 README를 따릅니다.
+각 예제 폴더에서 실행합니다.
 
 ```sh
-npm --prefix ../Tellus-audio-engine run build:runtime
-npm --prefix ../tellus-audio-sdk run build
+cp .env.example .env
+# .env에 TELLUS_AUDIO_ENGINE_TOKEN과 API_KEY를 각각 설정합니다.
+npm run setup
 ```
+
+setup은 공개 SDK 저장소의 `v0.2.5`를 각 예제 내부의 `.sdk/`에 내려받고 `scripts/audio-sdk-release.json`의 고정 커밋을 검증한 뒤 JavaScript 패키지를 빌드합니다. `.npmrc`의 `install-links=true`로 해당 플랫폼 패키지를 `node_modules`에 복사하고, 설치 토큰과 같은 환경의 다운로드 서버에서 엔진·checksum·암호화 모델을 준비합니다. Web은 브라우저 자산도 복사합니다. Rust 빌드나 GitHub 인증은 필요하지 않습니다.
+
+`TELLUS_AUDIO_DOWNLOAD_BASE_URL`은 설치 토큰의 환경과 같아야 합니다. 다운로드 서버에 대상 엔진과 checksum이 게시되고 해당 플랫폼이 허용되어 있어야 setup이 완료됩니다. Web은 `wasm32-emscripten` archive와 checksum을 사용합니다. `.sdk/`는 Git에서 제외하며, 버전을 변경할 때는 세 예제의 SDK 고정 커밋과 lockfile을 함께 갱신합니다.
+
+설치 회귀 검증은 저장소 루트에서 `node --test tests/setup-sdk.test.mjs`로 실행합니다. 앱 검증은 Web·Mobile의 `npm run verify:pre-commit`, Desktop의 `npm run typecheck && npm test && npm run build`를 각각 사용합니다.
 
 ## API contract
 

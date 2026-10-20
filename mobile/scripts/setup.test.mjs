@@ -9,6 +9,7 @@ function runSetup(t, { dotenv = '', env = {}, failAt = '' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'tellus-mobile-setup-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'scripts'));
+  writeFileSync(join(root, 'scripts/prepare-sdk.mjs'), 'export function prepareSdk() {}\n');
   writeFileSync(join(root, 'scripts/setup.mjs'), readFileSync(new URL('./setup.mjs', import.meta.url)));
   writeFileSync(join(root, '.env'), dotenv);
   const installer = join(root, 'node_modules/@tellus-ai/audio-sdk-mobile/dist/installer');

@@ -8,6 +8,7 @@ function runSetup(dotenv, overrides = {}) {
   const root = mkdtempSync(join(tmpdir(), 'tellus-web-setup-'));
   try {
     mkdirSync(join(root, 'scripts'));
+    writeFileSync(join(root, 'scripts/prepare-sdk.mjs'), 'export function prepareSdk() {}\n');
     writeFileSync(join(root, 'scripts/setup.mjs'), readFileSync(new URL('../scripts/setup.mjs', import.meta.url)));
     writeFileSync(join(root, '.env'), dotenv);
     writeFileSync(join(root, 'package.json'), '{"type":"module"}');

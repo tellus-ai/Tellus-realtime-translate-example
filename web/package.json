@@ -19,7 +19,7 @@
     "verify:pre-commit": "npm run typecheck && npm test && npm run test:download-server && npm run build"
   },
   "dependencies": {
-    "@tellus-ai/audio-sdk-web": "file:../../tellus-audio-sdk/platforms/web",
+    "@tellus-ai/audio-sdk-web": "file:.sdk/platforms/web",
     "@vitejs/plugin-react": "latest",
     "react": "latest",
     "react-dom": "latest",
