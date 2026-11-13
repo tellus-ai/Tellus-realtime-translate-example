@@ -7,11 +7,11 @@ import { parseEnv } from 'node:util';
 const root = new URL('../', import.meta.url);
 const envFile = new URL('.env', root);
 const env = { ...(existsSync(envFile) ? parseEnv(readFileSync(envFile, 'utf8')) : {}), ...process.env };
-const baseUrl = env.TELLUS_AUDIO_DOWNLOAD_BASE_URL || env.VITE_REALTIME_SPEECH_HTTP_URL || 'https://stgrtsapi.tellus.ai.kr';
+const baseUrl = env.TELLUS_AUDIO_DOWNLOAD_BASE_URL || env.VITE_REALTIME_SPEECH_HTTP_URL || 'https://public.speech.tellus.ai.kr';
 const installationToken = env.TELLUS_AUDIO_ENGINE_TOKEN;
 
 try {
-  if (!installationToken) throw new Error('Set TELLUS_AUDIO_ENGINE_TOKEN to your Tellus-issued installation token in web/.env. API_KEY is only for runtime login.');
+  if (!installationToken) throw new Error('Set TELLUS_AUDIO_ENGINE_TOKEN to your Tellus-issued installation token in web/.env. API_KEY is the runtime API key from the Tellus API Console.');
   if (!process.env.npm_execpath) throw new Error('Run this script with npm run setup.');
   prepareSdk(root, { ...env, TELLUS_AUDIO_ENGINE_TOKEN: installationToken, TELLUS_AUDIO_DOWNLOAD_BASE_URL: baseUrl }, process.env.npm_execpath);
   console.log('Installing SDK, the web engine, and encrypted models...');

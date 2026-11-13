@@ -1,6 +1,6 @@
 # Desktop Realtime Translation Example
 
-A standalone Electron app that connects directly to the Tellus staging Realtime Speech server. Microphone
+A standalone Electron app that connects directly to the Tellus public speech server. Microphone
 capture, Silero VAD, and Opus encoding run in the native Tellus audio engine
 ([`@tellus-ai/audio-sdk-desktop`](https://github.com/tellus-ai/tellus-audio-sdk)) inside the Electron main process.
 The React screen started as a copy of the [web example](../web/README.md); nothing is imported from `web/`.
@@ -13,7 +13,7 @@ REST and WebSocket contracts used by this example.
 Use Node.js 24 and Git. Install with the setup command before running the app:
 
 ```bash
-cp .env.example .env   # set TELLUS_AUDIO_ENGINE_TOKEN (installation) and API_KEY (runtime login)
+cp .env.example .env   # set TELLUS_AUDIO_ENGINE_TOKEN (installation) and API_KEY (API key from the Tellus API Console)
 npm run setup
 npm run dev
 ```
@@ -26,17 +26,17 @@ You can also use the development script, which checks `.env` first.
 
 `npm run setup` downloads the public SDK **0.2.5** source into this example's `.sdk/` directory, verifies the commit pinned in `scripts/audio-sdk-release.json`, and builds its JavaScript packages. It then installs `.sdk/platforms/desktop`, with its version recorded in `package-lock.json`. No sibling SDK checkout, engine source, Rust build, or GitHub credentials are required. The SDK installer uses the existing customer installation token to request
 file-specific download tokens for native engine **0.3.4** and its checksum from
-`TELLUS_AUDIO_DOWNLOAD_BASE_URL` (staging by default), then
+`TELLUS_AUDIO_DOWNLOAD_BASE_URL` (public speech server by default), then
 downloads the engine files from `https://download.tellus.ai.kr` and verifies SHA-256. Login and download
 tokens are kept out of package URLs, the lockfile, and logs. A CDN `401` gets one fresh grant and one retry.
 
 The token API must be deployed on the selected Realtime Speech server. Its environment prefix must
 contain the native engine archive for your platform and its `.sha256` file.
-For staging this is `stg/audio/engine/v0.3.4/`. A missing API returns
+The prefix follows the installation token environment, for example `stg/audio/engine/v0.3.4/` or `prod/audio/engine/v0.3.4/`. A missing API returns
 `404`; a missing artifact or invalid installation token must be resolved before setup can finish.
 
 `TELLUS_AUDIO_ENGINE_TOKEN` is the existing Tellus-issued customer installation token. Installation
-does not use `API_KEY` or require an app login. `API_KEY` remains the login access token for REST calls
+does not use `API_KEY` or require an app login. `API_KEY` remains the API key issued in the Tellus API Console for REST calls
 and engine execution approval at runtime. Installation and execution token renewal are separate.
 Setup loads `.env` and passes both the engine token and download base URL to npm and its child
 processes. The download server must match the installation token's environment; set
@@ -216,10 +216,10 @@ Any other error from the module, such as a final `engine.denied` (`engine_access
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `REALTIME_SPEECH_HTTP_URL` | `https://stgrtsapi.tellus.ai.kr` | `http:` is allowed only for localhost |
-| `REALTIME_SPEECH_WS_URL` | `wss://stgrtsapi.tellus.ai.kr` | `ws:` is allowed only for localhost |
-| `API_KEY` | | OAuth access token sent as `Authorization: Bearer <token>` |
-| `TELLUS_AUDIO_DOWNLOAD_BASE_URL` | staging HTTP URL | Realtime Speech artifact token API for native engine downloads |
+| `REALTIME_SPEECH_HTTP_URL` | `https://public.speech.tellus.ai.kr` | `http:` is allowed only for localhost |
+| `REALTIME_SPEECH_WS_URL` | `wss://public.speech.tellus.ai.kr` | `ws:` is allowed only for localhost |
+| `API_KEY` | | API key from the Tellus API Console, sent as `Authorization: Bearer <key>` |
+| `TELLUS_AUDIO_DOWNLOAD_BASE_URL` | public speech HTTP URL | Realtime Speech artifact token API for native engine downloads |
 | `TELLUS_AUDIO_ENGINE_TOKEN` | | Existing Tellus-issued customer installation token; installation only |
 
 During development the main process reads `.env` next to `package.json`. Variables already set in the
@@ -284,7 +284,7 @@ npm run test:engine-auth
 This creates and ends its own conversation, verifies native approval and invalid-token rejection,
 and never enables microphone or speaker capture. For a dev-only test, change the three HTTP/WS/download
 base URLs in your ignored `.env` to `https://devrtsapi.tellus.ai.kr` / `wss://devrtsapi.tellus.ai.kr`
-and use a dev login `API_KEY`; the checked-in defaults remain staging.
+and use a dev console `API_KEY`; the checked-in defaults use the production public speech server.
 
 ## Live Development Server Smoke Test
 

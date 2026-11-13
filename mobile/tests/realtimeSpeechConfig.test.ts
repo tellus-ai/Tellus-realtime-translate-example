@@ -85,8 +85,8 @@ it('keeps the defaults when the settings are missing or blank', () => {
   })).toEqual({
     audioSdkEnabled: true,
     accessToken: '',
-    httpBaseUrl: 'https://stgrtsapi.tellus.ai.kr',
-    websocketBaseUrl: 'wss://stgrtsapi.tellus.ai.kr',
+    httpBaseUrl: 'https://public.speech.tellus.ai.kr',
+    websocketBaseUrl: 'wss://public.speech.tellus.ai.kr',
     appOrigin: 'https://devapp.tellus.ai.kr',
   });
 });

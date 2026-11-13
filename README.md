@@ -6,10 +6,10 @@ Standalone realtime translation examples that can be copied and used independent
 - [`mobile/`](./mobile/README.md): Expo + React Native mobile example
 - [`desktop/`](./desktop/README.md): Electron desktop example using the Tellus native audio engine
 
-None of the apps depend on local Realtime Speech server code. All of them connect directly to the staging server below.
+None of the apps depend on local Realtime Speech server code. All of them connect directly to the Tellus public speech server below. Issue `API_KEY` and `TELLUS_AUDIO_ENGINE_TOKEN` in the Tellus API Console (https://public.api.tellus.ai.kr/console).
 
-- HTTP: `https://stgrtsapi.tellus.ai.kr`
-- WebSocket: `wss://stgrtsapi.tellus.ai.kr`
+- HTTP: `https://public.speech.tellus.ai.kr`
+- WebSocket: `wss://public.speech.tellus.ai.kr`
 
 Each app has its own packages and realtime communication implementation, with no imports between them.
 Each app reads `API_KEY` from its local `.env` file and uses it in the
@@ -44,8 +44,8 @@ setup은 공개 SDK 저장소의 `v0.2.5`를 각 예제 내부의 `.sdk/`에 내
 The examples follow the Realtime Speech API documented in Swagger. This section
 summarizes that documentation; Swagger is the reference.
 
-- Swagger UI: `https://stgrtsapi.tellus.ai.kr/docs`
-- OpenAPI document: `https://stgrtsapi.tellus.ai.kr/openapi.json`
+- Swagger UI: `https://public.speech.tellus.ai.kr/docs`
+- OpenAPI document: `https://public.speech.tellus.ai.kr/openapi.json`
 
 The **Integration Guide** at the top of the Swagger page covers one
 Conversation from creation to end: the calls to make, what the server sends,
@@ -55,9 +55,9 @@ HTTP operations.
 
 ### Base URLs and authentication
 
-- HTTP base URL: `https://stgrtsapi.tellus.ai.kr`
-- WebSocket base URL: `wss://stgrtsapi.tellus.ai.kr`
-- The REST endpoints require `Authorization: Bearer <OAuth access token>`.
+- HTTP base URL: `https://public.speech.tellus.ai.kr`
+- WebSocket base URL: `wss://public.speech.tellus.ai.kr`
+- The REST endpoints require `Authorization: Bearer <API key issued in the Tellus API Console>`.
   Creating a Conversation makes the authenticated user its creator; guest
   tokens are rejected. A missing, invalid, or expired token returns `401`:
   refresh the token and retry once.
@@ -346,7 +346,7 @@ Use this to fill finals missed while the Result WebSocket was disconnected:
 Endpoint:
 
 ```text
-wss://stgrtsapi.tellus.ai.kr/conversations/{conversation_id}/results
+wss://public.speech.tellus.ai.kr/conversations/{conversation_id}/results
 ```
 
 Receive transcripts, translations, presence, and the end of the Conversation.
@@ -464,7 +464,7 @@ and the close frame repeats it as its reason text (`CloseEvent.reason`).
 Endpoint:
 
 ```text
-wss://stgrtsapi.tellus.ai.kr/audio?conversation_id={conversation_id}&audio_format={opus|pcm16}
+wss://public.speech.tellus.ai.kr/audio?conversation_id={conversation_id}&audio_format={opus|pcm16}
 ```
 
 Stream one speaker's audio into a Conversation. Save interpretation settings
@@ -652,7 +652,7 @@ per speaker.
 
 **Node.js clients.** Use the [`ws`](https://github.com/websockets/ws) package
 instead of the `WebSocket` built into Node.js, which is also the one in the
-Electron main process. Against the staging server, the built-in client reports
+Electron main process. Against the public speech server, the built-in client reports
 an error close as `1006` with no message and no reason (observed with Node.js
 22.19 and Electron 44.5), so every error close looks like a network drop and
 the client keeps reconnecting. It loses a compressed message that is followed

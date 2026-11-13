@@ -24,7 +24,7 @@ npm run ios
 # 또는 npm run android
 ```
 
-`.env`의 `API_KEY`에 OAuth access token을 설정하고 서로 다른 두 언어를 선택한다. `/audio` socket의 `attachEngineAuthorization.ready`가 permit과 모델 키를 적용한 뒤 마이크 권한을 요청하고 캡처를 시작한다. 새 socket마다 같은 capture를 재승인하며, 승인 폐기 시 OS 캡처와 대기 출력도 중단한다.
+`.env`의 `API_KEY`에 Tellus API 콘솔에서 발급한 API 키를 설정하고 서로 다른 두 언어를 선택한다. `/audio` socket의 `attachEngineAuthorization.ready`가 permit과 모델 키를 적용한 뒤 마이크 권한을 요청하고 캡처를 시작한다. 새 socket마다 같은 capture를 재승인하며, 승인 폐기 시 OS 캡처와 대기 출력도 중단한다.
 
 - 처리·전송: Opus, 16kHz mono, 20ms
 - denoise: FastEnhancer 기본 활성화; `EXPO_PUBLIC_TELLUS_DENOISE=false`로 초기 비활성화 가능. **Noise Reduction (Denoise)** 스위치로 Start 전과 녹음·일시정지 중에 변경할 수 있다. SDK의 `setDenoiseEnabled()`로 적용한 뒤 `getStatus()`로 확인하며, **Audio SDK denoise**에 적용 상태를 표시한다. 선택값은 Stop 후 다음 세션에도 유지하고, 적용 실패는 번역을 종료하지 않고 표시한다.

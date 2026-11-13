@@ -47,12 +47,12 @@ describe('buildContentSecurityPolicy', () => {
 });
 
 describe('resolveRealtimeSpeechConfig', () => {
-  it('uses the staging server by default and trims values', () => {
+  it('uses the public speech server by default and trims values', () => {
     expect(resolveRealtimeSpeechConfig({ API_KEY: ' token ' })).toEqual({
       audioSdkEnabled: true,
       accessToken: 'token',
-      httpBaseUrl: 'https://stgrtsapi.tellus.ai.kr',
-      websocketBaseUrl: 'wss://stgrtsapi.tellus.ai.kr',
+      httpBaseUrl: 'https://public.speech.tellus.ai.kr',
+      websocketBaseUrl: 'wss://public.speech.tellus.ai.kr',
     });
     expect(resolveRealtimeSpeechConfig({
       REALTIME_SPEECH_HTTP_URL: 'https://rts.example.test/',

@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { AudioCapture } from '@tellus-ai/audio-sdk-desktop';
 import { attachEngineAuthorization } from '@tellus-ai/audio-sdk-desktop/authorization';
 
-const httpBase = process.env.REALTIME_SPEECH_HTTP_URL || 'https://stgrtsapi.tellus.ai.kr';
-const wsBase = process.env.REALTIME_SPEECH_WS_URL || 'wss://stgrtsapi.tellus.ai.kr';
+const httpBase = process.env.REALTIME_SPEECH_HTTP_URL || 'https://public.speech.tellus.ai.kr';
+const wsBase = process.env.REALTIME_SPEECH_WS_URL || 'wss://public.speech.tellus.ai.kr';
 const token = process.env.API_KEY;
-if (!token) throw new Error('Set API_KEY to a login access token.');
+if (!token) throw new Error('Set API_KEY to an API key issued in the Tellus API Console.');
 if (new URL(httpBase).protocol !== 'https:' || new URL(wsBase).protocol !== 'wss:') {
   throw new Error('Use HTTPS and WSS endpoints for the live authorization test.');
 }

@@ -10,11 +10,11 @@ const env = { ...(existsSync(envFile) ? parseEnv(readFileSync(envFile, 'utf8')) 
 const baseUrl = env.TELLUS_AUDIO_DOWNLOAD_BASE_URL?.trim()
   || env.REALTIME_SPEECH_HTTP_URL?.trim()
   || env.EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL?.trim()
-  || 'https://stgrtsapi.tellus.ai.kr';
+  || 'https://public.speech.tellus.ai.kr';
 const installationToken = env.TELLUS_AUDIO_ENGINE_TOKEN;
 
 try {
-  if (!installationToken) throw new Error('Set TELLUS_AUDIO_ENGINE_TOKEN to your Tellus-issued installation token in mobile/.env. API_KEY is only for runtime login.');
+  if (!installationToken) throw new Error('Set TELLUS_AUDIO_ENGINE_TOKEN to your Tellus-issued installation token in mobile/.env. API_KEY is the runtime API key from the Tellus API Console.');
   if (!process.env.npm_execpath) throw new Error('Run this script with npm run setup.');
   prepareSdk(root, { ...env, TELLUS_AUDIO_ENGINE_TOKEN: installationToken, TELLUS_AUDIO_DOWNLOAD_BASE_URL: baseUrl }, process.env.npm_execpath);
   console.log('Installing the mobile SDK and native engine assets...');

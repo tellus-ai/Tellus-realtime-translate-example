@@ -1,5 +1,5 @@
-const DEFAULT_HTTP_URL = 'https://stgrtsapi.tellus.ai.kr';
-const DEFAULT_WS_URL = 'wss://stgrtsapi.tellus.ai.kr';
+const DEFAULT_HTTP_URL = 'https://public.speech.tellus.ai.kr';
+const DEFAULT_WS_URL = 'wss://public.speech.tellus.ai.kr';
 
 function trimTrailingSlash(value: string): string {
   return value.trim().replace(/\/+$/, '');

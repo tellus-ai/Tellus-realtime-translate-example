@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
 
-const DEFAULT_HTTP_URL = 'https://stgrtsapi.tellus.ai.kr';
-const DEFAULT_WS_URL = 'wss://stgrtsapi.tellus.ai.kr';
+const DEFAULT_HTTP_URL = 'https://public.speech.tellus.ai.kr';
+const DEFAULT_WS_URL = 'wss://public.speech.tellus.ai.kr';
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 export interface RealtimeSpeechConfig {
