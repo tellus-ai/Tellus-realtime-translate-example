@@ -68,6 +68,10 @@ npm run verify:pre-commit
 공개 CI 서명 키를 신뢰하는 개발용 engine artifact와 테스트 CEK는 실제 배포에 사용하지 않는다.
 
 
+iOS 27은 iOS 27 SDK로 빌드한 앱이 UIScene 생명주기를 쓰지 않으면 실행 직후 종료한다(`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`). Expo SDK 55 template은 아직 `AppDelegate`에서 React Native를 시작하므로, `plugins/withUIScene.js`가 `expo prebuild` 때마다 `Info.plist`에 scene 설정을 추가하고 `AppDelegate.swift`에 `SceneDelegate`를 넣는다. `SceneDelegate`는 scene의 window에서 React Native를 시작하고, 앱을 연 링크를 `Linking.getInitialURL()`이 읽는 launch options로 옮기며, 실행 중 링크와 앱 생명주기 콜백을 `AppDelegate`로 넘긴다(Expo module이 그곳에서 받는다). git에 있는 iOS host도 같은 상태이며 `tests/withUIScene.test.ts`가 둘이 같은지 검사한다. Expo template이 바뀌어 plugin이 바꿀 위치를 찾지 못하면 prebuild가 오류로 멈춘다.
+
+Xcode 27.2에서는 Pods의 배포 대상 때문에 빌드가 실패한다(SDWebImage resource bundle의 9.0, expo-router의 iOS 16 API). 최소 iOS를 올리기 전까지는 `IPHONEOS_DEPLOYMENT_TARGET=16.0`을 `xcodebuild` 인자로 넘겨 빌드한다.
+
 Android host는 `app.json`과 SDK plugin으로 생성하는 로컬 산출물이므로 git에 저장하지 않는다. `npx expo prebuild --platform android --no-install`로 재생성할 수 있다. 기존 tracked iOS host는 유지하며 `prebuild --clean`으로 덮어쓰지 않는다. 새 CNG 앱에서는 [Expo 공식 흐름](https://docs.expo.dev/workflow/continuous-native-generation/)을 따라 두 플랫폼 모두 자동 생성할 수 있다.
 
 실제 개발 앱 검증은 아래 명령을 사용한다. 앱을 설치·실행하고 localhost Metro를 시작한 뒤, 공개 CI 서명 키로 빌드한 테스트 artifact와 임시 CEK 경로를 지정한다. 마이크 payload를 저장하거나 송신하지 않고 metadata만 검사하며, 재생은 합성 WAV로 검사한다.
