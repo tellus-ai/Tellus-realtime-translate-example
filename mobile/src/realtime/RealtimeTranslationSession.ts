@@ -1,3 +1,4 @@
+import { ConversationAccessTokens } from '../api/accessTokens';
 import {
   buildAudioWebSocketUrl,
   buildResultWebSocketUrl,
@@ -8,6 +9,7 @@ import {
   type RealtimeEndpoints,
   type StartConversationInput,
 } from '../api/conversationApi';
+import { gotNoResponse, RealtimeApiError } from '../api/httpClient';
 import type { MicrophoneRecorder } from '../audio/NativeMicrophone';
 import { OggOpusRecording, type AudioRecordingFile } from '../audio/OggOpusRecording';
 import type { AudioChunk } from '@tellus-ai/audio-sdk-mobile';
@@ -15,7 +17,7 @@ import type { VadSnapshot } from '../audio/VADTypes';
 
 const DISABLED_VAD_SNAPSHOT: VadSnapshot = { enabled: false, ready: false, mode: 'disabled', gate: 'closed' };
 const INITIAL_SILERO_VAD_SNAPSHOT: VadSnapshot = { ...DISABLED_VAD_SNAPSHOT, enabled: true, mode: 'silero' };
-import { decideSocketClose, STABLE_CONNECTION_MS, type RealtimeSocket, type SystemError } from './closePolicy';
+import { decideSocketClose, reconnectDelayMs, STABLE_CONNECTION_MS, type RealtimeSocket, type SystemError } from './closePolicy';
 import { parseSocketMessage } from './resultParser';
 import { applyResultEvent, awaitsFinal, lastCompleteOrderSeq } from './transcriptReducer';
 import type { ConnectionStatus, SessionSnapshot } from './types';
@@ -38,6 +40,8 @@ export class RealtimeTranslationSession {
   private listeners = new Set<Listener>();
   private recording = new OggOpusRecording();
   private sockets: Record<RealtimeSocket, WebSocket | null> = { result: null, audio: null };
+  // The app has no API key: both sockets open with an access token from this example's server.
+  private accessTokens: ConversationAccessTokens | null = null;
   // The server explains an error close with a `system.error` just before it.
   private lastSocketError: Record<RealtimeSocket, SystemError | null> = { result: null, audio: null };
   private pendingOpen: Record<RealtimeSocket, PendingOpen | null> = { result: null, audio: null };
@@ -64,7 +68,6 @@ export class RealtimeTranslationSession {
   constructor(
     private readonly endpoints: RealtimeEndpoints,
     private readonly microphone: MicrophoneRecorder,
-    private readonly apiKey: string,
   ) { this.snapshot.denoise.enabled = microphone.denoiseEnabled; }
 
   subscribe(listener: Listener): () => void {
@@ -99,7 +102,9 @@ export class RealtimeTranslationSession {
   }
 
   async start(input: StartConversationInput): Promise<void> {
-    if (!this.apiKey) throw new Error('Set the API_KEY environment variable.');
+    if (!this.endpoints.apiBaseUrl) {
+      throw new Error('Set TELLUS_EXAMPLE_API_URL in mobile/.env, or run the app from the Expo development server.');
+    }
     if (!input.sourceLanguage || !input.targetLanguage) throw new Error('Select two languages.');
     if (input.sourceLanguage === input.targetLanguage) throw new Error('Select two different languages.');
     if (!['idle', 'ended', 'error'].includes(this.snapshot.phase) || this.snapshot.denoise.updating) return;
@@ -128,20 +133,23 @@ export class RealtimeTranslationSession {
       if (generation !== this.generation) return;
       if (!this.microphone.audioSdkReady) throw new Error('Audio SDK is required. Non-SDK audio capture is not supported.');
       this.update({ audioSdkReady: true, denoise: { ...this.snapshot.denoise, applied: this.microphone.denoiseEnabled } });
-      const conversationId = await createConversation(this.endpoints, this.apiKey);
+      const conversationId = await createConversation(this.endpoints);
       if (generation !== this.generation) {
-        await endConversation(this.endpoints, this.apiKey, conversationId).catch(() => {});
+        await endConversation(this.endpoints, conversationId).catch(() => {});
         return;
       }
       this.update({ phase: 'configuring', conversationId });
-      await saveInterpretationSettings(this.endpoints, this.apiKey, conversationId, input.sourceLanguage, input.targetLanguage, false);
+      await saveInterpretationSettings(this.endpoints, conversationId, input.sourceLanguage, input.targetLanguage, false);
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
+      this.accessTokens = new ConversationAccessTokens(this.endpoints, conversationId);
+      const accessToken = await this.currentAccessToken();
+      if (generation !== this.generation) return;
       // The server accepts the sockets in either order. Result goes first here, so that it is
       // open before the first audio. A socket that does not become usable has already failed
       // the start in `handleSocketClose`.
-      if (!await this.openSocket('result', conversationId) || generation !== this.generation) return;
-      if (!await this.openSocket('audio', conversationId) || generation !== this.generation) return;
+      if (!await this.openSocket('result', conversationId, accessToken) || generation !== this.generation) return;
+      if (!await this.openSocket('audio', conversationId, accessToken) || generation !== this.generation) return;
       this.resetAudioStream();
       this.sendAudioStatus('capturing');
       this.update({ phase: 'recording' });
@@ -244,7 +252,7 @@ export class RealtimeTranslationSession {
     await this.waitForSnapshot((snapshot) => snapshot.resultConnection !== 'open' || !snapshot.rows.some(awaitsFinal), LAST_FINAL_TIMEOUT);
     await this.cleanupLocal({ keepResultSocket: true });
     try {
-      if (conversationId && this.apiKey) await endConversation(this.endpoints, this.apiKey, conversationId);
+      if (conversationId) await endConversation(this.endpoints, conversationId);
       // `conversation.ended` and the HTTP response arrive in either order, and results can
       // still arrive until then. `handleSocketMessage` closes the socket on `conversation.ended`.
       await this.waitForSnapshot((snapshot) => snapshot.resultConnection !== 'open', CONVERSATION_ENDED_TIMEOUT);
@@ -271,7 +279,7 @@ export class RealtimeTranslationSession {
    * approval for `/v1/audio`, `open` for Result. Resolves `false` when it closed, timed out,
    * or was closed by this client first; whoever closed it has already decided what happens next.
    */
-  private openSocket(kind: RealtimeSocket, conversationId: string): Promise<boolean> {
+  private openSocket(kind: RealtimeSocket, conversationId: string, accessToken: string): Promise<boolean> {
     this.closeSocket(kind);
     this.lastSocketError[kind] = null;
     const NativeWebSocket = WebSocket as unknown as NativeWebSocketConstructor;
@@ -279,8 +287,8 @@ export class RealtimeTranslationSession {
       // The server first sends the finals stored after `after_order_seq`, then live results.
       ? buildResultWebSocketUrl(this.endpoints, conversationId, lastCompleteOrderSeq(this.snapshot.rows))
       : buildAudioWebSocketUrl(this.endpoints, conversationId);
-    // Both sockets need a credential. The API key goes in a header, never in the URL.
-    const socket = new NativeWebSocket(url, null, { headers: buildWebSocketHeaders(this.endpoints, this.apiKey) });
+    // Both sockets need a credential. The access token goes in a header, never in the URL.
+    const socket = new NativeWebSocket(url, null, { headers: buildWebSocketHeaders(this.endpoints, accessToken) });
     if (kind === 'audio') socket.binaryType = 'arraybuffer';
     this.sockets[kind] = socket;
     this.setConnection(kind, 'connecting');
@@ -306,7 +314,8 @@ export class RealtimeTranslationSession {
         const onError = (error: Error) => {
           if (socket === this.sockets.audio && !this.intentionalClose) this.handleAuthorizationError(error);
         };
-        void this.microphone.authorize(socket, conversationId, this.apiKey, onError).then(() => {
+        // The approval is renewed while the socket is open, each time with a current token.
+        void this.microphone.authorize(socket, conversationId, this.currentAccessToken, onError).then(() => {
           if (socket === this.sockets.audio && this.audioCloseTimer === null) this.settleOpen('audio', true);
         }, onError);
       }
@@ -379,7 +388,10 @@ export class RealtimeTranslationSession {
     this.clearStableTimer();
     this.socketsToReopen.add(kind);
     if (kind === 'audio') this.suspendAudio();
-    // An attempt that is already waiting reopens this socket as well.
+    this.scheduleReconnectAttempt(delayMs);
+  }
+  private scheduleReconnectAttempt(delayMs: number): void {
+    // An attempt that is already waiting reopens every closed socket.
     if (this.reconnectTimer !== null) return;
     this.reconnectAttempt += 1;
     this.reconnectTimer = setTimeout(() => this.reconnectNow(), delayMs);
@@ -412,22 +424,48 @@ export class RealtimeTranslationSession {
     // next one. That attempt reopens whatever is still closed, after its own delay.
     const superseded = () => this.intentionalClose || generation !== this.generation || this.reconnectTimer !== null;
     if (!conversationId || superseded() || this.socketsToReopen.size === 0) return;
+    // The token of the first connection may have expired by now.
+    let accessToken: string;
+    try {
+      accessToken = await this.currentAccessToken();
+    } catch (error) {
+      if (!superseded()) this.handleAccessTokenFailure(error);
+      return;
+    }
+    if (superseded()) return;
     // Result first, as in `start`.
     if (this.socketsToReopen.has('result')) {
-      if (!await this.openSocket('result', conversationId) || superseded()) return;
+      if (!await this.openSocket('result', conversationId, accessToken) || superseded()) return;
     }
     if (this.socketsToReopen.has('audio')) {
       await this.reconnectPreparation;
       if (superseded()) return;
       this.reconnectPreparation = null;
       this.resetAudioStream();
-      if (!await this.openSocket('audio', conversationId)) return;
+      if (!await this.openSocket('audio', conversationId, accessToken)) return;
       await this.resumeAudio(generation);
     }
     if (superseded() || this.socketsToReopen.size > 0) return;
     // The server can close a socket right after accepting it, so the backoff starts over only
     // after both sockets stayed open for a while.
     this.stableTimer = setTimeout(() => { this.stableTimer = null; this.reconnectAttempt = 0; }, STABLE_CONNECTION_MS);
+  }
+  /** For a new socket, and for each engine approval on `/v1/audio`. */
+  private readonly currentAccessToken = (): Promise<string> =>
+    this.accessTokens?.get() ?? Promise.reject(new Error('No Conversation is open.'));
+  /** Without a token no socket can be opened. Decides as for a socket that the server closed. */
+  private handleAccessTokenFailure(error: unknown): void {
+    // Anything else, such as an answer without a token, would fail the same way again.
+    const status = error instanceof RealtimeApiError ? error.status : undefined;
+    if (status === 404 || status === 410) {
+      // The Conversation is gone or has ended.
+      this.finishEnded();
+    } else if (status !== undefined && (gotNoResponse(status) || status === 503)) {
+      // No response, or temporarily unavailable: try again as after a lost connection.
+      this.scheduleReconnectAttempt(reconnectDelayMs(this.reconnectAttempt));
+    } else {
+      this.failActiveSession(error instanceof Error ? error.message : String(error));
+    }
   }
   /** A new `/v1/audio` socket counts samples from 0 again, with a closed VAD gate. */
   private resetAudioStream(): void {
@@ -517,8 +555,8 @@ export class RealtimeTranslationSession {
       // The error shows once everything is released. `POST /end` can take several retries, so it
       // runs in the background.
       this.update({ phase: 'error', error: message });
-      if (!shouldEndConversation || !conversationId || !this.apiKey) return;
-      const pendingEnd: Promise<void> = endConversation(this.endpoints, this.apiKey, conversationId)
+      if (!shouldEndConversation || !conversationId) return;
+      const pendingEnd: Promise<void> = endConversation(this.endpoints, conversationId)
         .catch(() => {})
         .finally(() => { if (this.pendingEnd === pendingEnd) this.pendingEnd = null; });
       this.pendingEnd = pendingEnd;

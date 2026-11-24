@@ -10,7 +10,7 @@ npm run ios
 # 또는 npm run android
 ```
 
-`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인하고 공개 SDK 0.3.13의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 런타임 로그인용이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정하며, 없으면 `REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, staging 기본 주소 순서로 선택한다.
+`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인하고 공개 SDK 0.3.13의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 Expo 개발 서버가 런타임에 쓰는 키이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정하며, 없으면 `REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, staging 기본 주소 순서로 선택한다.
 
 `./dev.sh [start|ios|android]`도 SDK 또는 엔진 파일이 없으면 같은 setup을 실행한다. setup 이후 `npm run ios` 또는 `npm run android`로 SDK가 포함된 개발 앱을 빌드한다.
 
@@ -24,7 +24,7 @@ npm run ios
 # 또는 npm run android
 ```
 
-`.env`의 `API_KEY`에 Tellus API 콘솔에서 발급한 API 키를 설정하고 서로 다른 두 언어를 선택한다. `POST /v1/conversations`로 Conversation을 만들고 `POST /v1/conversations/{id}/settings`로 두 언어를 저장한 뒤, 결과 socket(`/v1/conversations/{id}/results`)과 `/v1/audio` socket을 연다. 두 socket은 handshake의 `Authorization: Bearer <API 키>` 헤더와 `Origin` 헤더로 인증한다. React Native는 WebSocket 헤더를 설정할 수 있으므로 연결 입장권(`POST /v1/access-tokens`)을 사용하지 않으며, API 키를 URL에 넣지 않는다(서버가 거절한다). 결과 socket은 ready 메시지 없이 열리는 즉시 사용하고, 재연결할 때는 `after_order_seq`로 마지막으로 완료한 발화 번호를 전달해 끊긴 동안의 확정 결과를 다시 받는다. `/v1/audio` socket의 `attachEngineAuthorization.ready`가 permit과 모델 키를 적용한 뒤 마이크 권한을 요청하고 캡처를 시작한다. 엔진 승인과 갱신에도 같은 API 키를 전달한다. 새 socket마다 같은 capture를 재승인하며, 승인 폐기 시 OS 캡처와 대기 출력도 중단한다.
+`.env`의 `API_KEY`에 Tellus API 콘솔에서 발급한 API 키를 설정하고 서로 다른 두 언어를 선택한다. 키는 앱에 들어가지 않는다. 아래 «API 키와 연결 입장권»처럼 Mac의 Expo 개발 서버가 키를 갖고, 앱은 그 서버를 거쳐 `POST /v1/conversations`로 Conversation을 만들고 `POST /v1/conversations/{id}/settings`로 두 언어를 저장한 뒤 연결 입장권을 받는다. 결과 socket(`/v1/conversations/{id}/results`)과 `/v1/audio` socket은 Tellus에 직접 열며, handshake의 `Authorization: Bearer <입장권>` 헤더와 `Origin` 헤더로 인증한다. React Native는 WebSocket 헤더를 설정할 수 있으므로 입장권을 URL에 넣지 않는다. 결과 socket은 ready 메시지 없이 열리는 즉시 사용하고, 재연결할 때는 `after_order_seq`로 마지막으로 완료한 발화 번호를 전달해 끊긴 동안의 확정 결과를 다시 받는다. `/v1/audio` socket의 `attachEngineAuthorization.ready`가 permit과 모델 키를 적용한 뒤 마이크 권한을 요청하고 캡처를 시작한다. 엔진 승인과 갱신에도 그때의 입장권을 전달한다. 새 socket마다 같은 capture를 재승인하며, 승인 폐기 시 OS 캡처와 대기 출력도 중단한다.
 
 - 처리·전송: Opus, 16kHz mono, 20ms
 - denoise: DeepFilterNet3 기본 활성화, `denoiseMode: 'general'`(SDK 기본값 `close_talk`는 마이크에서 먼 소리를 무음으로 만들어 떨어져 있는 상대 화자의 말이 빠질 수 있다); `EXPO_PUBLIC_TELLUS_DENOISE=false`로 초기 비활성화 가능. **Noise Reduction (Denoise)** 스위치로 Start 전과 녹음·일시정지 중에 변경할 수 있다. SDK의 `setDenoiseEnabled()`로 적용한 뒤 `getStatus()`로 확인하며, **Audio SDK denoise**에 적용 상태를 표시한다. 선택값은 Stop 후 다음 세션에도 유지하고, 적용 실패는 번역을 종료하지 않고 표시한다.
@@ -33,7 +33,29 @@ npm run ios
 - background·interruption·route 변경: 자동 캡처 재개 없이 중단하며 새 승인이 필요한 연결은 재승인 후 재개
 - TTS: SDK `playback` 또는 `playbackEncoded`를 사용하면 OS 재생과 같은 PCM이 Rust AEC reference에 들어간다
 
-`npm start`, `npm run ios`, `npm run android`와 이를 실행하는 `./dev.sh start`, `./dev.sh ios`, `./dev.sh android`는 모두 `mobile/.env`를 읽는다. 서버 URL과 Origin은 `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, `APP_ORIGIN`으로 설정하며, 공통 `app.config.ts`가 Expo `extra`를 통해 앱에 전달한다. 기존 `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_WS_URL`, `EXPO_PUBLIC_APP_ORIGIN`도 지원하고, 두 형식이 함께 있으면 접두사가 없는 변수를 우선한다. `APP_ORIGIN`에는 서버에서 허용한 값을 지정해야 한다. 설정 변경 후 실행 중인 Metro를 종료하고 사용할 실행 명령을 다시 실행한다. API 키는 앱 bundle에 포함되므로 만료일을 지정한 키를 사용하고, partner secret이나 모델 content key를 넣지 않는다. 실제 서비스에서는 API 키를 자체 서버에 두고 앱에는 `POST /v1/access-tokens`로 발급한 연결 입장권만 전달하는 구성을 권장한다.
+`npm start`, `npm run ios`, `npm run android`와 이를 실행하는 `./dev.sh start`, `./dev.sh ios`, `./dev.sh android`는 모두 `mobile/.env`를 읽는다. `API_KEY`와 `REALTIME_SPEECH_HTTP_URL`은 Metro(`metro.config.js`)만 읽는다. WebSocket URL과 Origin은 `REALTIME_SPEECH_WS_URL`, `APP_ORIGIN`으로 설정하며, 공통 `app.config.ts`가 Expo `extra`를 통해 앱에 전달한다. 기존 `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_WS_URL`, `EXPO_PUBLIC_APP_ORIGIN`도 지원하고, 두 형식이 함께 있으면 접두사가 없는 변수를 우선한다. `APP_ORIGIN`에는 서버에서 허용한 값을 지정해야 한다. 설정 변경 후 실행 중인 Metro를 종료하고 사용할 실행 명령을 다시 실행한다. `extra`에는 키가 설정되었는지 여부(`apiKeyConfigured`)만 들어간다. partner secret이나 모델 content key도 앱에 넣지 않는다.
+
+## API 키와 연결 입장권
+
+앱이 가진 값은 앱을 가진 사람이 꺼낼 수 있으므로 앱에는 API 키를 넣지 않는다. 키는 Mac에서 실행하는 Expo(Metro) 개발 서버 프로세스에만 있고, 앱은 Conversation 하나를 15분 동안 여는 연결 입장권만 받는다.
+
+```text
+앱                                     Expo 개발 서버 (Metro)                Tellus
+POST /__tellus/api/v1/conversations  →  + Authorization: Bearer <API 키>  →  POST /v1/conversations
+POST /__tellus/api/v1/conversations/{id}/settings ──────────────────────→  POST /v1/conversations/{id}/settings
+POST /__tellus/api/v1/access-tokens  ───────────────────────────────────→  POST /v1/access-tokens
+                                     ←  { access_token, expires_at_ms }
+WS /v1/conversations/{id}/results  (Authorization: Bearer <입장권>) ──────────────────────────────→  Tellus
+WS /v1/audio?conversation_id={id}&audio_format=opus  (Authorization: Bearer <입장권>) ───────────→  Tellus
+POST /__tellus/api/v1/conversations/{id}/end ───────────────────────────→  POST /v1/conversations/{id}/end
+```
+
+- `scripts/conversation-api-middleware.cjs`가 서버 쪽이다. `metro.config.js`가 녹음 저장 middleware와 함께 Metro에 등록한다. 이 네 호출만 `REALTIME_SPEECH_HTTP_URL`로 전달하며 API 키를 붙인다. `/__tellus/api` 아래의 다른 경로는 `404`다. Tellus의 상태 코드와 본문을 그대로 돌려주고, Tellus에 연결하지 못하면 `502`, 15초 안에 응답이 없으면 `504`를 돌려준다. `npm run test:api-server`로 검사한다.
+- 앱은 이 호출에 자격 증명을 보내지 않고 `X-Tellus-Example-Api: 1` 헤더만 보낸다. middleware는 이 헤더가 있고 `Origin`이 없거나 자기 주소인 요청만 받는다. React Native의 fetch는 `Origin`을 보내지 않으므로 앱은 통과하고, 다른 웹 페이지는 거절된다.
+- 서버 주소는 녹음 다운로드와 같은 방법(React Native `SourceCode`의 HTTP(S) 번들 URL 또는 Expo `hostUri`)으로 찾는다. Metro 없이 실행하는 빌드에서는 `.env`의 `TELLUS_EXAMPLE_API_URL`에 같은 네 경로를 제공하는 서버 주소를 지정한다(예: `https://your-backend.example/tellus`). 둘 다 없으면 Start가 오류를 표시한다.
+- 입장권은 이 Conversation만 연다. `src/api/accessTokens.ts`가 현재 입장권을 보관하고, 남은 시간이 1분 이하일 때 요청을 받으면 새로 발급받는다. 재연결과, SDK가 `/v1/audio`에서 보내는 엔진 승인(`audio.authenticate`, `engine.renew`)마다 요청한다. 열린 socket은 입장권이 만료되어도 닫히지 않는다.
+
+**이 middleware가 실제 백엔드로 바꿀 부분이다.** middleware는 호출한 사람이 누구인지 확인하지 않는다. 그리고 Metro는 기기가 접속할 수 있도록 로컬 네트워크에서 대기하므로, 같은 네트워크에서 Metro 포트에 접근할 수 있는 사람은 누구나 이 키로 Conversation을 시작할 수 있다(키를 읽을 수는 없다). 실제 서비스의 백엔드는 자체 로그인 세션을 먼저 확인한 뒤 그 사용자를 위해 이 호출을 한다.
 
 ```sh
 npm run verify:pre-commit

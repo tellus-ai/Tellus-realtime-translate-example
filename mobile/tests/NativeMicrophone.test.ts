@@ -47,19 +47,22 @@ describe('mobile SDK denoise', () => {
 });
 
 describe('mobile engine approval', () => {
-  it('gives the SDK the API key for the first approval and for every renewal', async () => {
+  it('asks for the current access token for the first approval and for every renewal', async () => {
     const attach = jest.mocked(attachEngineAuthorization);
     attach.mockReturnValue({ ready: Promise.resolve(), dispose: jest.fn() } as unknown as ReturnType<typeof attachEngineAuthorization>);
     const microphone = new NativeMicrophone();
     await microphone.prepare(false);
     const socket = {} as WebSocket;
-    await microphone.authorize(socket, 'conversation-1', 'api-key', jest.fn());
+    const tokens = ['tl_at_1', 'tl_at_2'];
+    await microphone.authorize(socket, 'conversation-1', async () => tokens.shift()!, jest.fn());
 
     const [attachedSocket, attachedCapture, options] = attach.mock.calls[0]!;
     expect(attachedSocket).toBe(socket);
     expect(attachedCapture).toBe(capture);
     expect(options.conversationId).toBe('conversation-1');
-    expect([options.getAccessToken(), options.getAccessToken()]).toEqual(['api-key', 'api-key']);
+    // A renewal can come after the first token expired, so each request gets the current one.
+    await expect(options.getAccessToken()).resolves.toBe('tl_at_1');
+    await expect(options.getAccessToken()).resolves.toBe('tl_at_2');
   });
 });
 

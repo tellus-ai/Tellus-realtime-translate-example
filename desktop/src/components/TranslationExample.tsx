@@ -30,7 +30,7 @@ export function TranslationExample() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const audioSdkEnabled = realtimeSpeechConfig.audioSdkEnabled !== false;
   const clientVad = vadSelected && !audioSdkEnabled;
-  const apiKeyConfigured = realtimeSpeechConfig.apiKeyConfigured;
+  const apiServerConfigured = realtimeSpeechConfig.apiServerConfigured;
   const active = ['preparing-audio', 'creating', 'configuring', 'connecting', 'recording', 'paused', 'reconnecting', 'stopping'].includes(realtime.phase);
   const busy = ['preparing-audio', 'creating', 'configuring', 'connecting', 'stopping'].includes(realtime.phase);
 
@@ -52,7 +52,7 @@ export function TranslationExample() {
       </header>
 
       <section className="setup-panel">
-        {!apiKeyConfigured && <p className="error" role="alert">Set API_KEY in desktop/.env and restart the app.</p>}
+        {!apiServerConfigured && <p className="error" role="alert">Start the app with npm run dev, or set TELLUS_EXAMPLE_API_URL to the server that holds the API key.</p>}
         <label>
           Source Language
           <select value={sourceLanguage} disabled={active} onChange={(event) => setSourceLanguage(event.target.value)}>
@@ -71,7 +71,7 @@ export function TranslationExample() {
       </section>
 
       <section className="control-panel">
-        <button disabled={active || downloading || realtime.denoise.updating || !apiKeyConfigured} onClick={() => {
+        <button disabled={active || downloading || realtime.denoise.updating || !apiServerConfigured} onClick={() => {
           setDownloadMessage(null); setDownloadError(null);
           void realtime.start({ sourceLanguage, targetLanguage, clientVad });
         }}>

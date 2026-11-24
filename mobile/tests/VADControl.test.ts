@@ -42,7 +42,7 @@ describe('VAD switch availability', () => {
 
 let mockSdkEnabled = true;
 jest.mock('../src/config/realtimeSpeechConfig', () => ({
-  realtimeSpeechConfig: { apiKey: 'api-key', get audioSdkEnabled() { return mockSdkEnabled; } },
+  realtimeSpeechConfig: { apiKeyConfigured: true, get audioSdkEnabled() { return mockSdkEnabled; } },
 }));
 jest.mock('../src/hooks/useRealtimeTranslation', () => ({ useRealtimeTranslation: jest.fn() }));
 const mockRealtime = jest.mocked(useRealtimeTranslation);

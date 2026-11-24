@@ -27,7 +27,7 @@ describe('VAD toggle availability', () => {
 const screen = vi.hoisted(() => ({ audioSdkEnabled: true, phase: 'idle' }));
 vi.mock('../src/config/realtimeSpeechConfig', () => ({
   realtimeSpeechConfig: {
-    apiKeyConfigured: true,
+    apiServerConfigured: true,
     get audioSdkEnabled() { return screen.audioSdkEnabled; },
   },
 }));

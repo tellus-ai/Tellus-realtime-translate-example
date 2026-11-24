@@ -36,8 +36,9 @@ The prefix follows the installation token environment, for example `stg/audio/en
 `404`; a missing artifact or invalid installation token must be resolved before setup can finish.
 
 `TELLUS_AUDIO_ENGINE_TOKEN` is the existing Tellus-issued customer installation token. Installation
-does not use `API_KEY` or require an app login. `API_KEY` remains the API key issued in the Tellus API Console for REST calls,
-the WebSocket handshakes, and engine execution approval at runtime. Installation and execution token renewal are separate.
+does not use `API_KEY` or require an app login. `API_KEY` is the API key issued in the Tellus API Console. At runtime only the
+`npm run dev` server reads it (see [API key and access tokens](#api-key-and-access-tokens)); the app itself uses an access
+token for the WebSocket handshakes and the engine execution approval. Installation and execution token renewal are separate.
 Setup loads `.env` and passes both the engine token and download base URL to npm and its child
 processes. The download server must match the installation token's environment; set
 `TELLUS_AUDIO_DOWNLOAD_BASE_URL` separately when the runtime server uses a different environment. Setup runs `npm ci`
@@ -45,8 +46,9 @@ against the committed lockfile. A direct `npm install` or `npm ci` requires expo
 `TELLUS_AUDIO_ENGINE_TOKEN` and `TELLUS_AUDIO_DOWNLOAD_BASE_URL` in the shell first.
 
 `npm run dev` starts the Vite dev server and opens it inside Electron. Renderer changes hot-reload;
-restart `npm run dev` after changing `electron/` or `.env`. `npm start` runs the last `npm run build`
-output without the dev server, the same way a packaged app does.
+restart `npm run dev` after changing `electron/` or `.env`. The dev server is also the example API server
+that holds `API_KEY`. `npm start` runs the last `npm run build` output without the dev server, the same way a
+packaged app does, so it needs `TELLUS_EXAMPLE_API_URL`: a server that provides the same four routes.
 
 On macOS the app asks for microphone access the first time you press **Start**.
 
@@ -61,10 +63,11 @@ npm run dist   # installers for the current platform
 not configured. The engine's native addon, ONNX Runtime library, and models are unpacked from `app.asar`
 (`asarUnpack`) because native code cannot read files inside the archive.
 
-The build writes `dist/runtime.env` with only `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, `API_KEY`, and
-`TELLUS_AUDIO_SDK_ENABLED`, and the packaged app reads that file. `TELLUS_AUDIO_ENGINE_TOKEN` is never bundled. `API_KEY` is,
-so anyone with the app can extract it, the same way the web build exposes the key in its bundle. Use an
-API key with an expiry date and do not distribute builds that contain your own key.
+The build writes `dist/runtime.env` with only `REALTIME_SPEECH_WS_URL`, `TELLUS_EXAMPLE_API_URL`, and
+`TELLUS_AUDIO_SDK_ENABLED`, and the packaged app reads that file. `API_KEY` and `TELLUS_AUDIO_ENGINE_TOKEN` are never
+bundled, so there is no key to extract from the app. Set `TELLUS_EXAMPLE_API_URL` in `.env` before the build to the
+server that holds the key; without it, the packaged app shows that no example API server is configured and
+cannot start a session.
 
 ## Architecture
 
@@ -72,7 +75,7 @@ The main process owns the whole session; the renderer only draws it.
 
 | Process | Responsibility |
 | --- | --- |
-| Main | Audio engine capture, REST calls and the Result and Audio WebSockets (`ws`) with `API_KEY`, reconnects, transcript state |
+| Main | Audio engine capture, REST calls to the example API server, the Result and Audio WebSockets (`ws`) with the access token, reconnects, transcript state |
 | Renderer | Language and VAD selection, Audio SDK status, Start/Pause/Resume/Stop, rendering the session snapshot pushed over IPC |
 
 - **Audio SDK.** `AudioEngine.init()` runs at app start with client VAD disabled. Each session requires
@@ -94,13 +97,10 @@ The main process owns the whole session; the renderer only draws it.
   capture starts again. A reconnect of only the Result WebSocket leaves the permit and capture alone.
   Terminal authorization denial stops the session. See
   [Native engine authorization on `/v1/audio`](#native-engine-authorization-on-v1audio).
-- **API key.** Each REST call, WebSocket handshake, and engine authorization request rereads `API_KEY`
-  from the environment/runtime file. Both `/v1` WebSockets need a credential, and the main process sends
-  the key as `Authorization: Bearer <key>` in the handshake. The key never goes into a URL; the server
-  refuses it there. A browser cannot set that header and opens the same sockets with an access token
-  from `POST /v1/access-tokens` instead, as the [web example](../web/README.md) does; this example
-  does not need one. While a socket is open the server rechecks the key and closes the socket with
-  `4401` once the key is revoked, expired, or changes scope.
+- **No API key in the app.** The main process, the renderer, and the packaged app never have `API_KEY`.
+  The example API server holds it and gets an access token for each Conversation; see
+  [API key and access tokens](#api-key-and-access-tokens). While a socket is open the server rechecks the
+  key behind its token and closes the socket with `4401` once the key is revoked, expired, or changes scope.
 - **Client VAD.** The SDK gate stays off (`vadEnabled: false`, `setVadEnabled(false)`) and interpretation
   settings always use `client_vad: false`, even if a caller requests client VAD. Pause, resume, and
   reconnect preserve this setting; `audio.status` reports `vad.enabled: false` without gate events.
@@ -116,6 +116,44 @@ The main process owns the whole session; the renderer only draws it.
   the app stops the session and ends the conversation first. It does not wait for the last results, and
   it waits at most 3 seconds for `POST /end`, also for one that a failed session is still sending.
 
+## API key and access tokens
+
+Whatever an app holds can be read by whoever has the app, so this app does not hold the API key. The key
+stays in the Vite dev server that `npm run dev` starts, and the app gets an access token that opens one
+Conversation for 15 minutes:
+
+```text
+Main process                         Example API server (npm run dev)      Tellus
+POST /__tellus/api/v1/conversations ------> + Authorization: Bearer <API key> ---> POST /v1/conversations
+POST /__tellus/api/v1/conversations/{id}/settings ------------------------------> POST /v1/conversations/{id}/settings
+POST /__tellus/api/v1/access-tokens --------------------------------------------> POST /v1/access-tokens
+        <------------------------------------- { access_token, expires_at_ms }
+WS /v1/conversations/{id}/results  (Authorization: Bearer <access token>) -----------------------> Tellus
+WS /v1/audio?conversation_id={id}&audio_format=opus  (Authorization: Bearer <access token>) -----> Tellus
+POST /__tellus/api/v1/conversations/{id}/end -----------------------------------> POST /v1/conversations/{id}/end
+```
+
+- `scripts/conversation-api-middleware.cjs` is the server side, registered in `vite.config.mts`. It reads
+  `API_KEY` and `REALTIME_SPEECH_HTTP_URL` from `.env` itself and forwards exactly these four calls to
+  Tellus with the key; any other path under `/__tellus/api` is `404`. It returns the status and the body of
+  Tellus unchanged, and answers `502` when Tellus could not be reached and `504` when it did not answer
+  within 15 seconds. The renderer bundle still reads nothing from `.env` (`envDir: false`), and
+  `scripts/dev.mjs` removes `API_KEY` from the environment of the Electron process.
+- The main process sends these calls without a credential and with the `X-Tellus-Example-Api: 1` header.
+  The middleware refuses a request without that header or from another web origin.
+- The WebSockets go from the main process straight to Tellus. `ws` can send headers, so the access token
+  goes in `Authorization`, not in the URL.
+- A token opens only this Conversation. `electron/realtime/accessTokens.ts` keeps the current one and asks
+  for the next when it is asked for a token that has less than a minute left: for a reconnect, and for each
+  engine approval (`audio.authenticate`, `engine.renew`) on `/v1/audio`. An open WebSocket is not closed when
+  its token expires.
+- `npm start` and a packaged app have no dev server. They send the four calls to `TELLUS_EXAMPLE_API_URL`,
+  with the same paths after it (for example `https://backend.example.com/__tellus/api/v1/conversations`).
+
+**This middleware is the part to replace with your own backend.** It does not know who its caller is:
+anyone who can reach the dev server (it listens on `127.0.0.1` only) can start a Conversation on your key. A
+real backend checks its own login session first, and then makes these calls for that user.
+
 ## Error Handling and Reconnects
 
 The session follows
@@ -129,7 +167,8 @@ The session follows
 | `conversation.ended`, close `1000`, or `1008` with `conversation_ended` or `conversation_not_found` | Shows the Conversation as `ended` and stops. No reconnect and no `POST /end`. |
 | `1008` with `audio_connection_replaced` or `results_connection_replaced` | Stops with an error and leaves the Conversation open for the other device or tab. A Conversation has one Result WebSocket and one `/v1/audio` connection per speaker. |
 | Any other `1008`, such as `auth_failed` | Stops with the server message and calls `POST /end`. The native authorization reasons that differ are listed [below](#native-engine-authorization-on-v1audio). |
-| `4401` | Stops with an error: the server no longer accepts the API key, so a reconnect with the same key would be refused. `POST /end` is still attempted. |
+| `4401` | Stops with an error: the server no longer accepts the API key behind the access token, so a reconnect would be refused. `POST /end` is still attempted. |
+| The access token is about to expire when a reconnect starts | Issues a new one first. `404` or `410` from that request shows the Conversation as `ended`; `503`, `502`, `504`, or no response moves to the next backoff step; any other status stops with the server message. |
 | `1012` | Reopens the socket after a random 0.5–2 seconds, then backs off. |
 | Any other close code, including `1006`, `1011`, and `1013` | Reopens the socket after 1, 2, 5, 10, then every 30 seconds, or after `retry_after_ms` when that is longer. A socket that closes while a reconnect is already waiting is reopened by that reconnect. |
 | A socket closes, or is not usable in time, while starting (until both sockets are open and the engine is authorized, that is, before the status is `recording`) | The start fails. Nothing is reconnected. Each socket has 10 seconds to open. Neither sends a ready message: Result is usable once it is open, and the engine authorization on `/v1/audio` then has its own 10 seconds. |
@@ -150,12 +189,15 @@ Source files:
 - `electron/realtime/closePolicy.ts`: what each close means, and the backoff steps.
 - `electron/realtime/RealtimeTranslationSession.ts`: sockets, the engine authorization, reconnects, and
   the Stop sequence.
-- `electron/realtime/nodeWebSocket.ts`: opens the WebSockets with `ws` and the API key header.
+- `electron/realtime/nodeWebSocket.ts`: opens the WebSockets with `ws` and the access token header.
+- `electron/realtime/accessTokens.ts`: the access token of the Conversation.
 - `electron/realtime/resultParser.ts`: `system.error` and the result messages, which carry item arrays
   (`data.utterances[]`, `data.translations[]`).
 - `electron/realtime/transcriptReducer.ts`: `awaitsFinal` tells which rows Stop still waits for, and
   `lastCompleteOrderSeq` gives the `after_order_seq` of a Result reconnect.
-- `electron/realtimeApi.ts`: `POST /end` statuses and `503` retries.
+- `electron/realtimeApi.ts`: the calls to the example API server, `POST /end` statuses, and `503` retries.
+- `scripts/conversation-api-middleware.cjs`: the server routes that hold the API key. `npm run test:api-server`
+  checks them.
 
 Not implemented:
 
@@ -177,8 +219,8 @@ of the `WebSocket` built into Node.js and Electron. Before an error close the se
 close looked like a network drop and the app kept reconnecting to Conversations that had ended. `ws`
 reports the message, the close code, and the reason.
 
-`ws` also sends the `Authorization` header that both `/v1` WebSockets require. The `WebSocket` of a
-browser cannot set request headers.
+`ws` also sends the `Authorization` header with the access token that both `/v1` WebSockets require. The
+`WebSocket` of a browser cannot set request headers.
 
 `ws` is a runtime dependency, so it is packaged with the app. `electron/realtime/nodeWebSocket.ts` adds an
 `error` listener to every socket: in `ws` an `error` event without a listener is an uncaught exception,
@@ -194,7 +236,7 @@ in `data.reason` of a `system.error` and as the reason of the close that follows
 | `engine_conversation_inactive` | `1008` | The Conversation has ended or does not exist. | Shows the Conversation as `ended` and stops. No `POST /end`. |
 | `engine_connection_superseded` | `1008` | A newer `/v1/audio` connection replaced this socket. | Same as `audio_connection_replaced`: stops with an error and leaves the Conversation open. |
 | `engine_authorization_expired` | `1008` | The permit expired without a renewal. | Reopens `/v1/audio` with backoff, because the new socket gets a new permit. This is the only `1008` that is reconnected. |
-| `engine_authentication_failed` | `1008` | The API key is invalid or expired. | Stops with the server message and calls `POST /end`. |
+| `engine_authentication_failed` | `1008` | The access token, or the API key behind it, is invalid or expired. | Stops with the server message and calls `POST /end`. |
 | `engine_access_denied`, `engine_authentication_invalid`, `engine_authentication_required`, `engine_request_replayed` | `1008` | No permission, or an invalid request. | Stops with the server message and calls `POST /end`. |
 | `engine_authentication_unavailable`, `engine_authorization_unavailable`, `engine_authorization_unconfigured` | `1013` | A temporary failure, or the server is not configured for engine authorization. | Reopens `/v1/audio` with backoff. |
 
@@ -228,14 +270,16 @@ Any other error from the module, such as a final `engine.denied` (`engine_access
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `REALTIME_SPEECH_HTTP_URL` | `https://public.speech.tellus.ai.kr` | `http:` is allowed only for localhost |
+| `REALTIME_SPEECH_HTTP_URL` | `https://public.speech.tellus.ai.kr` | Read by the `npm run dev` server only: where it forwards the four calls |
 | `REALTIME_SPEECH_WS_URL` | `wss://public.speech.tellus.ai.kr` | `ws:` is allowed only for localhost |
-| `API_KEY` | | API key from the Tellus API Console, sent as `Authorization: Bearer <key>` on REST calls and on both WebSocket handshakes |
+| `API_KEY` | | API key from the Tellus API Console. Read by the `npm run dev` server only; never in the app or the build |
+| `TELLUS_EXAMPLE_API_URL` | the `npm run dev` server | Your server with the four routes, for `npm start` and packaged apps. `http:` is allowed only for localhost |
 | `TELLUS_AUDIO_DOWNLOAD_BASE_URL` | public speech HTTP URL | Realtime Speech artifact token API for native engine downloads |
 | `TELLUS_AUDIO_ENGINE_TOKEN` | | Existing Tellus-issued customer installation token; installation only |
 
-During development the main process reads `.env` next to `package.json`. Variables already set in the
-process environment take precedence. Vite does not load `.env` for the renderer (`envDir: false`).
+During development the main process reads `.env` next to `package.json` and takes only
+`REALTIME_SPEECH_WS_URL`, `TELLUS_EXAMPLE_API_URL`, and `TELLUS_AUDIO_SDK_ENABLED` from it. Variables already set in
+the process environment take precedence. Vite does not load `.env` for the renderer (`envDir: false`).
 
 ## Security Defaults
 
@@ -253,20 +297,23 @@ process environment take precedence. Vite does not load `.env` for the renderer 
 | `electron/audio/audioEngine.ts` | The only module that imports `@tellus-ai/audio-sdk-desktop` |
 | `electron/realtime/RealtimeTranslationSession.ts` | Session lifecycle, WebSockets, engine authorization, `audio.status`, reconnects |
 | `electron/realtime/closePolicy.ts` | What each WebSocket close means, and the backoff steps |
-| `electron/realtime/nodeWebSocket.ts` | Opens the WebSockets with the `ws` package and the API key header |
+| `electron/realtime/nodeWebSocket.ts` | Opens the WebSockets with the `ws` package and the access token header |
+| `electron/realtime/accessTokens.ts` | The access token of the Conversation, renewed one minute before it expires |
 | `electron/realtime/VADAudioStatus.ts` | `audio.status` message builder |
-| `electron/realtimeApi.ts` | REST client for the `/v1` routes with the API key and `503` retries |
+| `electron/realtimeApi.ts` | REST client for the example API server, with `503` retries |
 | `electron/realtimeIpc.ts` | IPC handlers and input validation |
 | `electron/rendererProtocol.ts` | Serves the packaged renderer from `tellus-translate://app` |
 | `electron/security.ts` | Trusted origin, permissions, CSP, navigation lock |
 | `electron/shared/` | Types shared by main, preload, and renderer |
 | `src/` | Renderer (React UI) |
+| `scripts/conversation-api-middleware.cjs` | The example API server routes that hold the API key (`vite.config.mts`) |
 
 ## Verification
 
 ```bash
 npm run typecheck
 npm test
+npm run test:api-server
 npm run build
 ```
 
@@ -300,10 +347,11 @@ and use a dev console `API_KEY`; the checked-in defaults use the production publ
 
 ## Live Development Server Smoke Test
 
-Like the web smoke test, this uses `API_KEY` from `.env` only as a Bearer token and never prints it. It
-creates a Conversation on the `/v1` routes, connects both WebSockets as the app does (the API key in the
-`Authorization` header, no Origin header), checks that the server does not refuse either one, sends PCM16
-audio, and ends the Conversation in `finally`. Set `SMOKE_ORIGIN` to check how the server treats a browser origin.
+Like the web smoke test, this runs in Node.js in the place of the example API server and the app together.
+It uses `API_KEY` from `.env` only as a Bearer token on the REST calls and never prints it. It creates a
+Conversation on the `/v1` routes, issues an access token, connects both WebSockets as the app does (the
+access token in the `Authorization` header, no Origin header), checks that the server does not refuse
+either one, sends PCM16 audio, and ends the Conversation in `finally`. Set `SMOKE_ORIGIN` to check how the server treats a browser origin.
 
 ```bash
 npm run test:live

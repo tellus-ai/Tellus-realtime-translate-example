@@ -13,6 +13,6 @@ function readTellusDesktop(): TellusDesktopApi {
   return window.tellusDesktop;
 }
 
-// API_KEY and the server URLs stay in the main process; the renderer only learns whether a key is set.
+// The renderer learns only whether an example API server is configured. The API key is not in the app at all.
 export const tellusDesktop = readTellusDesktop();
 export const realtimeSpeechConfig = tellusDesktop.config;

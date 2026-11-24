@@ -4,7 +4,7 @@ import {
   type EngineAuthorizationController,
   type EngineAuthorizationSocket,
 } from '@tellus-ai/audio-sdk-desktop/authorization';
-import type { RealtimeApi } from '../realtimeApi';
+import { gotNoResponse, RealtimeApiError, type RealtimeApi } from '../realtimeApi';
 import { OggOpusRecording, type AudioRecordingFile } from '../audio/OggOpusRecording';
 import type { StartConversationInput } from '../shared/desktopApi';
 import type {
@@ -14,8 +14,10 @@ import type {
   VadEvent,
   VadGate,
 } from '../shared/realtimeTypes';
+import { ConversationAccessTokens } from './accessTokens';
 import {
   decideSocketClose,
+  reconnectDelayMs,
   STABLE_CONNECTION_MS,
   type RealtimeSocket,
   type SystemError,
@@ -128,6 +130,8 @@ export class RealtimeTranslationSession {
   private listeners = new Set<Listener>();
   private recording = new OggOpusRecording();
   private sockets: Record<RealtimeSocket, RealtimeWebSocket | null> = { result: null, audio: null };
+  // This app has no API key: both sockets open with an access token from the example server.
+  private accessTokens: ConversationAccessTokens | null = null;
   // The server explains an error close with a `system.error` just before it.
   private lastSocketError: Record<RealtimeSocket, SystemError | null> = { result: null, audio: null };
   private pendingOpen: Record<RealtimeSocket, PendingOpen | null> = { result: null, audio: null };
@@ -164,9 +168,7 @@ export class RealtimeTranslationSession {
     private readonly endpoints: RealtimeEndpoints,
     private readonly api: RealtimeApi,
     private readonly createCapture: (denoiseEnabled: boolean) => Promise<MicrophoneCapture>,
-    // Read again for every new socket and every engine approval, so a changed key takes effect.
-    private readonly getApiKey: () => string,
-    private readonly createSocket: (url: string, apiKey: string) => RealtimeWebSocket = createNodeWebSocket,
+    private readonly createSocket: (url: string, accessToken: string) => RealtimeWebSocket = createNodeWebSocket,
   ) {}
 
   subscribe(listener: Listener): () => void {
@@ -238,7 +240,9 @@ export class RealtimeTranslationSession {
     this.capture = capture;
     this.configureCapture(capture);
     if (capture.getStatus().denoiseActive !== denoiseEnabled) throw new Error('The Audio SDK did not apply the requested denoise setting.');
-    if (!await this.openSocket('audio', this.snapshot.conversationId!)) {
+    const accessToken = await this.currentAccessToken();
+    if (generation !== this.generation) return false;
+    if (!await this.openSocket('audio', this.snapshot.conversationId!, accessToken)) {
       if (generation !== this.generation) return false;
       throw new Error('The replacement audio connection could not be authorized.');
     }
@@ -318,11 +322,14 @@ export class RealtimeTranslationSession {
       await this.api.saveInterpretationSettings(conversationId, { ...input, clientVad: false });
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
+      this.accessTokens = new ConversationAccessTokens(() => this.api.issueAccessToken(conversationId));
+      const accessToken = await this.currentAccessToken();
+      if (generation !== this.generation) return;
       // The server accepts the sockets in either order. Result goes first here, so that it is
       // open before the first audio. A socket that does not become usable has already failed
       // the start in `handleSocketClose`.
-      if (!await this.openSocket('result', conversationId) || generation !== this.generation) return;
-      if (!await this.openSocket('audio', conversationId) || generation !== this.generation) return;
+      if (!await this.openSocket('result', conversationId, accessToken) || generation !== this.generation) return;
+      if (!await this.openSocket('audio', conversationId, accessToken) || generation !== this.generation) return;
 
       // The initial status always precedes the first audio frame.
       this.sendAudioStatus('capturing', this.snapshot.vad);
@@ -489,14 +496,14 @@ export class RealtimeTranslationSession {
    * Resolves `false` when it closed, timed out, or was closed by this client first; whoever
    * closed it has already decided what happens next.
    */
-  private openSocket(kind: RealtimeSocket, conversationId: string): Promise<boolean> {
+  private openSocket(kind: RealtimeSocket, conversationId: string, accessToken: string): Promise<boolean> {
     this.closeSocket(kind);
     this.lastSocketError[kind] = null;
-    // Both sockets need a credential. The API key goes in the handshake header (see
-    // nodeWebSocket.ts), never in the URL.
+    // Both sockets need a credential. The access token goes in the handshake header (see
+    // nodeWebSocket.ts), not in the URL.
     const socket = this.createSocket(
       kind === 'result' ? this.resultSocketUrl(conversationId) : this.audioSocketUrl(conversationId),
-      this.getApiKey(),
+      accessToken,
     );
     this.sockets[kind] = socket;
     this.setConnection(kind, 'connecting');
@@ -552,8 +559,8 @@ export class RealtimeTranslationSession {
     };
     const authorization = attachEngineAuthorization(socket, capture, {
       conversationId,
-      // The SDK calls its credential an access token. The server accepts the API key here.
-      getAccessToken: this.getApiKey,
+      // Asked for the first approval and again for every renewal, each time with a current token.
+      getAccessToken: this.currentAccessToken,
       onError,
     });
     this.authorization = authorization;
@@ -677,7 +684,11 @@ export class RealtimeTranslationSession {
     this.clearStableTimer();
     this.socketsToReopen.add(kind);
     if (kind === 'audio') this.suspendAudio();
-    // An attempt that is already waiting reopens this socket as well.
+    this.scheduleReconnectAttempt(delayMs);
+  }
+
+  private scheduleReconnectAttempt(delayMs: number): void {
+    // An attempt that is already waiting reopens every closed socket.
     if (this.reconnectTimer !== null) return;
     this.reconnectAttempt += 1;
     this.reconnectTimer = setTimeout(() => this.reconnectNow(), delayMs);
@@ -712,12 +723,22 @@ export class RealtimeTranslationSession {
       this.intentionalClose || generation !== this.generation || this.reconnectTimer !== null;
     if (!conversationId || superseded() || this.socketsToReopen.size === 0) return;
 
+    // The token of the first connection may have expired by now.
+    let accessToken: string;
+    try {
+      accessToken = await this.currentAccessToken();
+    } catch (error) {
+      if (!superseded()) this.handleAccessTokenFailure(error);
+      return;
+    }
+    if (superseded()) return;
+
     // Result first, as in `start`.
     if (this.socketsToReopen.has('result')) {
-      if (!await this.openSocket('result', conversationId) || superseded()) return;
+      if (!await this.openSocket('result', conversationId, accessToken) || superseded()) return;
     }
     if (this.socketsToReopen.has('audio')) {
-      if (!await this.openSocket('audio', conversationId)) return;
+      if (!await this.openSocket('audio', conversationId, accessToken)) return;
       this.resumeAudio(generation);
     }
     if (superseded() || this.socketsToReopen.size > 0) return;
@@ -727,6 +748,24 @@ export class RealtimeTranslationSession {
       this.stableTimer = null;
       this.reconnectAttempt = 0;
     }, STABLE_CONNECTION_MS);
+  }
+
+  /** For a new socket, and for each engine approval on `/v1/audio`. */
+  private readonly currentAccessToken = (): Promise<string> =>
+    this.accessTokens?.get() ?? Promise.reject(new Error('No Conversation is open.'));
+
+  /** Without a token no socket can be opened. Decides as for a socket that the server closed. */
+  private handleAccessTokenFailure(error: unknown): void {
+    const status = error instanceof RealtimeApiError ? error.status : undefined;
+    if (status === 404 || status === 410) {
+      // The Conversation is gone or has ended.
+      this.finishEnded();
+    } else if (status !== undefined && (gotNoResponse(status) || status === 503)) {
+      // No response, or temporarily unavailable: try again as after a lost connection.
+      this.scheduleReconnectAttempt(reconnectDelayMs(this.reconnectAttempt));
+    } else {
+      this.failActiveSession(error instanceof Error ? error.message : String(error));
+    }
   }
 
   private resumeAudio(generation: number): void {

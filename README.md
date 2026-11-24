@@ -12,11 +12,11 @@ None of the apps depend on local Realtime Speech server code. All of them connec
 - WebSocket: `wss://public.speech.tellus.ai.kr`
 
 Each app has its own packages and realtime communication implementation, with no imports between them.
-Each app reads `API_KEY` from its local `.env` file and sends it as
-`Authorization: Bearer <API key>` on the REST calls. The mobile and desktop examples send the
-same header when they open the WebSockets. In the web example the key stays in the development
-server: the browser calls that server, and opens the WebSockets with an access token that the
-server gets for it; see [Base URLs and authentication](#base-urls-and-authentication).
+`API_KEY` in each app's `.env` file is read by that app's development server, not by the app:
+the Vite server for web and desktop, and the Expo (Metro) server for mobile. The app calls its
+development server, which adds `Authorization: Bearer <API key>` and forwards the call to Tellus,
+and opens the WebSockets with an access token that the server gets for it; see
+[Base URLs and authentication](#base-urls-and-authentication).
 
 ## 플랫폼별 SDK 설치
 
@@ -88,18 +88,23 @@ only the token. Whatever a client holds can be read by its user: a key in a web
 bundle by anyone who opens the page, a key in a mobile or desktop app by anyone
 who has the app.
 
+The three examples follow this structure, with their development server in
+the place of your backend. None of them holds the API key:
+
 | Example | Who holds the API key | REST calls | WebSockets |
 | --- | --- | --- | --- |
-| Web | The Vite development server, not the browser | The browser calls the development server, which adds the API key and forwards the call | Access token in `token=`, issued through the development server |
-| Mobile | The app | API key | API key in the `Authorization` header |
-| Desktop | The Electron main process | API key | API key in the `Authorization` header |
+| Web | The Vite development server (`npm run dev`, `npm run preview`) | The browser calls the development server, which adds the API key | Access token in `token=` (a browser cannot set WebSocket headers) |
+| Mobile | The Expo (Metro) development server on your computer | The app calls the development server over the local network, which adds the API key | Access token in the `Authorization` header |
+| Desktop | The Vite development server that `npm run dev` starts | The Electron main process calls the development server, which adds the API key | Access token in the `Authorization` header |
 
-The web example shows the production structure, with its development server in
-the place of your backend; see its
-[README](./web/README.md#api-key-and-access-tokens). The mobile and desktop
-examples hold the key in the app so that they run without a backend of their
-own. Do not ship a key that way: move the same four calls to your server and
-give the app an access token, as the web example does.
+The development server forwards exactly four calls (create, settings, access
+token, end) and nothing else the key could do. It does not know who is calling
+it, so anyone who can reach it can start Conversations on your key, although
+they cannot read the key. A real backend checks its own login first. A build
+that does not run against the development server (the static web `dist/`, a
+packaged desktop app, a mobile build without Metro) cannot start a session until
+it is pointed at a backend that provides the same four routes; see each
+example's README.
 
 ### Conversation flow
 

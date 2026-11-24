@@ -1,11 +1,8 @@
-import Constants from 'expo-constants';
-import { TurboModuleRegistry } from 'react-native';
+import { devServerOrigin } from '../config/exampleServer';
 import type { AudioRecordingFile } from './OggOpusRecording';
 
 export async function downloadRecording(recording: AudioRecordingFile): Promise<string> {
-  const host = Constants.expoConfig?.hostUri;
-  const scriptUrl = TurboModuleRegistry.get<{ getConstants(): { scriptURL: string } }>('SourceCode')?.getConstants().scriptURL;
-  const serverUrl = scriptUrl?.match(/^https?:\/\/[^/]+/)?.[0] || (host ? `http://${host}` : undefined);
+  const serverUrl = devServerOrigin();
   if (!serverUrl) throw new Error('Mac의 ~/download에 저장하려면 로컬 Expo 개발 서버에 연결해 주세요.');
   const response = await fetch(`${serverUrl}/__tellus/recordings/${encodeURIComponent(recording.fileName)}`, {
     method: 'POST',

@@ -562,11 +562,12 @@ export class RealtimeTranslationSession {
 
   /** Without a token no socket can be opened. Decides as for a socket that the server closed. */
   private handleAccessTokenFailure(error: unknown): void {
-    const status = error instanceof RealtimeApiError ? error.status : null;
+    // Anything else, such as an answer without a token, would fail the same way again.
+    const status = error instanceof RealtimeApiError ? error.status : undefined;
     if (status === 404 || status === 410) {
       // The Conversation is gone or has ended.
       this.finishEnded();
-    } else if (gotNoResponse(status) || status === 503) {
+    } else if (status !== undefined && (gotNoResponse(status) || status === 503)) {
       // No response, or temporarily unavailable: try again as after a lost connection.
       this.scheduleReconnectAttempt(reconnectDelayMs(this.reconnectAttempt));
     } else {

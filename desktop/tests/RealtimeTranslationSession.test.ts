@@ -8,9 +8,12 @@ import {
   type RealtimeWebSocket,
 } from '../electron/realtime/RealtimeTranslationSession';
 
-const HTTP_BASE_URL = 'https://example.test';
-const API_KEY = 'api-key';
+// The example server that holds the API key. The app never has the key.
+const API_BASE_URL = 'http://127.0.0.1:5173/__tellus/api';
 const END_PATH = '/v1/conversations/conversation-1/end';
+const TOKEN_PATH = '/v1/access-tokens';
+const TOKEN_LIFETIME_MS = 15 * 60_000;
+const NETWORK_FAILURE = 'network failure';
 const ENDED_BY_SERVER = { phase: 'ended', error: null };
 const RATE_LIMITED = 'audio_pipeline_activation_rate_limited';
 const input = { sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true };
@@ -27,6 +30,9 @@ const server = {
   endStatuses: [] as number[],
   /** Whether a successful `POST /end` is followed by `conversation.ended` and 1000 on Result. */
   sendsEnded: true,
+  /** Answers for the next `POST /v1/access-tokens` calls; a new token once the list is empty. */
+  tokenReplies: [] as Array<number | typeof NETWORK_FAILURE>,
+  tokensIssued: 0,
 };
 
 class FakeCapture implements MicrophoneCapture {
@@ -129,8 +135,8 @@ class FakeSocket implements RealtimeWebSocket {
   readyState = FakeSocket.CONNECTING;
   private listeners: Array<{ type: SocketEvent; listener: SocketListener; attribute: boolean }> = [];
 
-  /** `apiKey` is what the client sends in the Authorization header of the handshake. */
-  constructor(readonly url: string, readonly apiKey: string) {
+  /** `accessToken` is what the client sends in the Authorization header of the handshake. */
+  constructor(readonly url: string, readonly accessToken: string) {
     this.kind = url.includes('/v1/audio?') ? 'audio' : 'result';
     FakeSocket.instances.push(this);
     queueMicrotask(() => FakeSocket.onConnect(this));
@@ -257,10 +263,19 @@ function reply(status: number, data: unknown = {}, message = 'ok'): Response {
 }
 
 async function fakeFetch(url: string, init: RequestInit): Promise<Response> {
-  const { pathname } = new URL(url);
+  const pathname = url.replace(API_BASE_URL, '');
   server.requests.push(`${init.method} ${pathname}`);
   timeline.push(`${init.method} ${pathname}`);
   if (pathname === '/v1/conversations') return reply(201, { conversation_id: 'conversation-1' });
+  if (pathname === TOKEN_PATH) {
+    const status = server.tokenReplies.shift() ?? 201;
+    if (status === NETWORK_FAILURE) throw new TypeError('Failed to fetch');
+    // This route answers without the common envelope.
+    const body = status === 201
+      ? { access_token: `token-${server.tokensIssued += 1}`, expires_at_ms: Date.now() + TOKEN_LIFETIME_MS }
+      : { detail: `Token refused with ${status}.` };
+    return { ok: status < 300, status, text: async () => JSON.stringify(body) } as Response;
+  }
   if (pathname.endsWith('/settings')) {
     if (server.settingsStatus !== 200) return reply(server.settingsStatus, null, 'Unsupported language.');
     server.settings.push(JSON.parse(String(init.body)));
@@ -306,20 +321,19 @@ function result(eventType: string, orderSeq: number, text: string, targetLanguag
   };
 }
 
-function createSession(getApiKey: () => string = () => API_KEY) {
+function createSession() {
   const capture = new FakeCapture();
   const session = new RealtimeTranslationSession(
     { websocketBaseUrl: 'wss://example.test' },
-    createRealtimeApi({ httpBaseUrl: HTTP_BASE_URL, apiKey: API_KEY }, fakeFetch),
+    createRealtimeApi({ apiBaseUrl: API_BASE_URL }, fakeFetch),
     async (denoiseEnabled) => { capture.status.denoiseActive = denoiseEnabled; return capture; },
-    getApiKey,
-    (url, apiKey) => new FakeSocket(url, apiKey),
+    (url, accessToken) => new FakeSocket(url, accessToken),
   );
   return { session, capture };
 }
 
-async function startSession(clientVad = false, getApiKey?: () => string) {
-  const created = createSession(getApiKey);
+async function startSession(clientVad = false) {
+  const created = createSession();
   await created.session.start({ ...input, clientVad });
   const [resultSocket, audioSocket] = FakeSocket.instances;
   return { ...created, resultSocket: resultSocket!, audioSocket: audioSocket! };
@@ -328,6 +342,7 @@ async function startSession(clientVad = false, getApiKey?: () => string) {
 /** Runs everything that is ready to run without moving the clock. */
 const flush = () => vi.advanceTimersByTimeAsync(0);
 const endRequests = () => server.requests.filter((request) => request === `POST ${END_PATH}`);
+const tokenRequests = () => server.requests.filter((request) => request === `POST ${TOKEN_PATH}`);
 const socketKinds = () => FakeSocket.instances.map((socket) => socket.kind);
 const latest = () => FakeSocket.instances.at(-1)!;
 const frames = (socket: FakeSocket) => socket.sent.filter((item) => item instanceof Uint8Array);
@@ -351,6 +366,8 @@ beforeEach(() => {
     settingsStatus: 200,
     endStatuses: [],
     sendsEnded: true,
+    tokenReplies: [],
+    tokensIssued: 0,
   });
   FakeSocket.instances = [];
   FakeSocket.onConnect = (socket) => socket.open();
@@ -469,31 +486,124 @@ describe('RealtimeTranslationSession with the audio engine', () => {
 });
 
 describe('RealtimeTranslationSession credentials', () => {
-  it('creates, saves settings, and opens both /v1 sockets with the API key in a header, not in the URL', async () => {
+  it('creates, saves settings, issues one token, and opens both /v1 sockets with it in a header', async () => {
     const { resultSocket, audioSocket } = await startSession();
-    // No access token is issued: the main process holds the API key and can send headers.
     expect(server.requests).toEqual([
       'POST /v1/conversations',
       'POST /v1/conversations/conversation-1/settings',
+      `POST ${TOKEN_PATH}`,
     ]);
     expect(resultSocket.url).toBe('wss://example.test/v1/conversations/conversation-1/results');
     expect(audioSocket.url).toBe('wss://example.test/v1/audio?conversation_id=conversation-1&audio_format=opus');
-    expect([resultSocket.apiKey, audioSocket.apiKey]).toEqual([API_KEY, API_KEY]);
-    for (const socket of FakeSocket.instances) {
-      expect(socket.url).not.toContain(API_KEY);
-      expect(socket.query.has('token')).toBe(false);
-    }
+    expect([resultSocket.accessToken, audioSocket.accessToken]).toEqual(['token-1', 'token-1']);
+    // `ws` can send a header, so the token stays out of the URL.
+    for (const socket of FakeSocket.instances) expect(socket.query.has('token')).toBe(false);
+    expect(audioSocket.authorizationRequests).toMatchObject([{ type: 'audio.authenticate', access_token: 'token-1' }]);
   });
 
-  it('reads the API key again for a socket that is reopened', async () => {
-    let apiKey = 'first-key';
-    const { audioSocket } = await startSession(false, () => apiKey);
-    expect(audioSocket.apiKey).toBe('first-key');
-    apiKey = 'fresh-key';
+  it('holds no API key: every REST call goes to the example server without a credential', async () => {
+    const calls: Array<[string, RequestInit]> = [];
+    const session = new RealtimeTranslationSession(
+      { websocketBaseUrl: 'wss://example.test' },
+      createRealtimeApi({ apiBaseUrl: API_BASE_URL }, (url, init) => { calls.push([url, init]); return fakeFetch(url, init); }),
+      async () => new FakeCapture(),
+      (url, accessToken) => new FakeSocket(url, accessToken),
+    );
+    await session.start(input);
+    await session.stop();
+    expect(calls.map(([url]) => url.replace(API_BASE_URL, ''))).toEqual([
+      '/v1/conversations', '/v1/conversations/conversation-1/settings', TOKEN_PATH, END_PATH,
+    ]);
+    for (const [url, init] of calls) {
+      expect(url.startsWith(`${API_BASE_URL}/v1/`)).toBe(true);
+      expect(init.headers).toEqual({ 'Content-Type': 'application/json', 'X-Tellus-Example-Api': '1' });
+    }
+    expect(JSON.parse(String(calls[2]![1].body))).toEqual({ session_kind: 'conversation', session_id: 'conversation-1' });
+  });
+
+  it('reuses the token for a reconnect and for an engine renewal while it is valid', async () => {
+    const { audioSocket } = await startSession();
     audioSocket.serverClose(1006);
     const reopened = await reopenedAfter(1_000);
-    expect(reopened.apiKey).toBe('fresh-key');
-    expect(reopened.authorizationRequests).toMatchObject([{ type: 'audio.authenticate', access_token: 'fresh-key' }]);
+    expect(reopened.accessToken).toBe('token-1');
+    expect(reopened.authorizationRequests).toMatchObject([{ type: 'audio.authenticate', access_token: 'token-1' }]);
+    expect(tokenRequests()).toHaveLength(1);
+  });
+
+  it('issues a new token for a reconnect once the first is about to expire', async () => {
+    const { session, audioSocket } = await startSession();
+    await vi.advanceTimersByTimeAsync(TOKEN_LIFETIME_MS - 60_000);
+    audioSocket.serverClose(1006);
+    const reopened = await reopenedAfter(1_000);
+    expect(reopened.accessToken).toBe('token-2');
+    expect(reopened.authorizationRequests).toMatchObject([{ type: 'audio.authenticate', access_token: 'token-2' }]);
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
+  });
+
+  it('fails the start and ends the Conversation when no token is issued', async () => {
+    server.tokenReplies = [401];
+    const { session } = createSession();
+    await session.start(input);
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'Token refused with 401.' });
+    expect(FakeSocket.instances).toEqual([]);
+    expect(endRequests()).toHaveLength(1);
+  });
+
+  it('fails the start without a request when no example API server is configured', async () => {
+    const session = new RealtimeTranslationSession(
+      { websocketBaseUrl: 'wss://example.test' },
+      createRealtimeApi({ apiBaseUrl: null }, fakeFetch),
+      async () => new FakeCapture(),
+      (url, accessToken) => new FakeSocket(url, accessToken),
+    );
+    await session.start(input);
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error' });
+    expect(session.getSnapshot().error).toContain('TELLUS_EXAMPLE_API_URL');
+    expect(server.requests).toEqual([]);
+    expect(FakeSocket.instances).toEqual([]);
+  });
+
+  describe('when the token for a reconnect cannot be issued', () => {
+    async function reconnectWithExpiredToken(...replies: typeof server.tokenReplies) {
+      const started = await startSession();
+      await vi.advanceTimersByTimeAsync(TOKEN_LIFETIME_MS);
+      server.tokenReplies = replies;
+      started.audioSocket.serverClose(1006);
+      await vi.advanceTimersByTimeAsync(1_000);
+      return started;
+    }
+
+    it.each([404, 410])('shows the Conversation as ended, without POST /end, after %i', async (status) => {
+      const { session } = await reconnectWithExpiredToken(status);
+      expect(session.getSnapshot()).toMatchObject(ENDED_BY_SERVER);
+      expect(endRequests()).toEqual([]);
+      expect(socketKinds()).toEqual(['result', 'audio']);
+    });
+
+    it('stops with the server message after 401', async () => {
+      const { session } = await reconnectWithExpiredToken(401);
+      expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'Token refused with 401.' });
+      expect(endRequests()).toHaveLength(1);
+    });
+
+    // 504: the example server asked Tellus and got no answer in time.
+    it.each([
+      ['the request gets no response', NETWORK_FAILURE],
+      ['the example server answers 504', 504],
+      ['the example server answers 503', 503],
+    ] as const)('keeps reconnecting with backoff when %s', async (_name, failure) => {
+      // The request itself is repeated after 1, 2, and 5 seconds before the attempt gives up.
+      const failures = Array<typeof failure>(4).fill(failure);
+      const { session } = await reconnectWithExpiredToken(...failures);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', error: null });
+      expect(socketKinds()).toEqual(['result', 'audio']);
+
+      await reopenedAfter(2_000);
+      expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
+    });
   });
 });
 
@@ -504,7 +614,7 @@ describe('RealtimeTranslationSession engine authorization', () => {
     const starting = session.start(input);
     await flush();
     const audioSocket = latest();
-    expect(audioSocket.authorizationRequests).toMatchObject([{ type: 'audio.authenticate', access_token: API_KEY }]);
+    expect(audioSocket.authorizationRequests).toMatchObject([{ type: 'audio.authenticate', access_token: 'token-1' }]);
     expect(capture.started).toBe(false);
     expect(audioSocket.sent).toEqual([]);
     expect(session.getSnapshot()).toMatchObject({ phase: 'connecting', audioConnection: 'open' });
@@ -567,19 +677,19 @@ describe('RealtimeTranslationSession engine authorization', () => {
     expect(capture.capturing).toBe(true);
   });
 
-  it('renews while paused using the current API key, and stops when the renewal is refused', async () => {
-    let apiKey = 'first-key';
-    const { session, capture, audioSocket } = await startSession(true, () => apiKey);
+  it('renews while paused with a current access token, and stops when the renewal is refused', async () => {
+    const { session, capture, audioSocket } = await startSession(true);
     await session.pause();
-    apiKey = 'fresh-key';
     await vi.advanceTimersByTimeAsync(480_000);
-    expect(audioSocket.authorizationRequests.at(-1)).toMatchObject({ type: 'engine.renew', access_token: 'fresh-key' });
+    expect(audioSocket.authorizationRequests.at(-1)).toMatchObject({ type: 'engine.renew', access_token: 'token-1' });
     expect(capture.authorized).toBe(true);
     expect(session.getSnapshot().phase).toBe('paused');
 
     FakeSocket.onAuthorize = (socket) =>
       socket.refuse(1008, 'engine_authentication_failed', 'The API key is not valid.');
     await vi.advanceTimersByTimeAsync(480_000);
+    // 16 minutes in, the first token has expired, so the renewal carries the next one.
+    expect(audioSocket.authorizationRequests.at(-1)).toMatchObject({ type: 'engine.renew', access_token: 'token-2' });
     expect(capture.authorized).toBe(false);
     expect(capture.stopped).toBe(true);
     expect(session.getSnapshot()).toMatchObject({
@@ -1576,9 +1686,8 @@ describe('disabled SDK configuration', () => {
     const createCapture = vi.fn(async () => new FakeCapture());
     const session = new RealtimeTranslationSession(
       { websocketBaseUrl: 'wss://example.test', audioSdkEnabled: false },
-      createRealtimeApi({ httpBaseUrl: HTTP_BASE_URL, apiKey: API_KEY }, fakeFetch),
+      createRealtimeApi({ apiBaseUrl: API_BASE_URL }, fakeFetch),
       createCapture,
-      () => API_KEY,
     );
     await session.start(input);
     expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: 'Audio SDK is required. Enable audio-sdk before starting a session.' });
@@ -1600,10 +1709,9 @@ describe('desktop SDK denoise selection', () => {
     });
     const session = new RealtimeTranslationSession(
       { websocketBaseUrl: 'wss://example.test' },
-      createRealtimeApi({ httpBaseUrl: HTTP_BASE_URL, apiKey: API_KEY }, fakeFetch),
+      createRealtimeApi({ apiBaseUrl: API_BASE_URL }, fakeFetch),
       createCapture,
-      () => API_KEY,
-      (url, apiKey) => new FakeSocket(url, apiKey),
+      (url, accessToken) => new FakeSocket(url, accessToken),
     );
     return { session, captures, createCapture };
   }

@@ -11,7 +11,7 @@ import {
 } from 'electron';
 import { createMicrophoneCapture, initializeAudioEngine } from './audio/audioEngine';
 import { downloadRecording } from './audio/downloadRecording';
-import { readEnvFile, resolveRealtimeSpeechConfig } from './config';
+import { readEnvFile, resolveExampleApiUrl, resolveRealtimeSpeechConfig } from './config';
 import { RealtimeTranslationSession } from './realtime/RealtimeTranslationSession';
 import { createRealtimeApi } from './realtimeApi';
 import { registerRealtimeIpc } from './realtimeIpc';
@@ -70,22 +70,20 @@ if (!app.requestSingleInstanceLock()) {
 
 function startApp(): void {
   // A packaged app reads only the runtime keys copied at build time (scripts/write-runtime-env.mjs).
-  // Values already set in the process environment take precedence.
+  // Values already set in the process environment take precedence. Neither contains the API key:
+  // the example API server holds it (scripts/conversation-api-middleware.cjs under `npm run dev`,
+  // or your own server in TELLUS_EXAMPLE_API_URL), and this process reads no key from `.env`.
   const envFile = app.isPackaged ? join(__dirname, '../runtime.env') : join(app.getAppPath(), '.env');
   const config = resolveRealtimeSpeechConfig({ ...readEnvFile(envFile), ...process.env });
-  const getApiKey = () => resolveRealtimeSpeechConfig({ ...readEnvFile(envFile), ...process.env }).apiKey;
-  const api = createRealtimeApi({
-    httpBaseUrl: config.httpBaseUrl,
-    get apiKey() { return getApiKey(); },
-  }, (url, init) => net.fetch(url, init));
+  const apiBaseUrl = resolveExampleApiUrl(config.exampleApiUrl, devServerUrl);
+  const api = createRealtimeApi({ apiBaseUrl }, (url, init) => net.fetch(url, init));
   // REST and both WebSockets run here without an Origin header, like other native clients.
   // The session opens its WebSockets with the `ws` package (realtime/nodeWebSocket.ts) and sends
-  // the API key in their Authorization header. The key never reaches the renderer.
+  // the access token of the Conversation in their Authorization header.
   realtimeSession = new RealtimeTranslationSession(
     { websocketBaseUrl: config.websocketBaseUrl, audioSdkEnabled: config.audioSdkEnabled },
     api,
     (denoiseEnabled) => createMicrophoneCapture(requestMicrophoneAccess, denoiseEnabled),
-    getApiKey,
   );
   realtimeSession.subscribe((snapshot) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(SNAPSHOT_CHANNEL, snapshot);
@@ -101,7 +99,7 @@ function startApp(): void {
     saveRecording: (recording) => downloadRecording(app.getPath('home'), recording),
     isTrustedSender: (event) => isTrustedIpcSender(event, isTrusted),
   });
-  mainWindow = createMainWindow({ apiKeyConfigured: Boolean(config.apiKey), audioSdkEnabled: config.audioSdkEnabled });
+  mainWindow = createMainWindow({ apiServerConfigured: apiBaseUrl !== null, audioSdkEnabled: config.audioSdkEnabled });
   // Load the native engine in the background so the first Start is fast.
   // A failure here is reported again when the user presses Start.
   if (config.audioSdkEnabled) initializeAudioEngine().then(

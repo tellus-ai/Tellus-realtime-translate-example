@@ -8,6 +8,8 @@ const END_PATH = '/v1/conversations/conversation-1/end';
 const TOKEN_PATH = '/v1/access-tokens';
 const TOKEN_LIFETIME_MS = 15 * 60_000;
 const NETWORK_FAILURE = 'network failure';
+/** A 201 whose body has no token. */
+const MALFORMED_TOKEN = 'malformed token';
 const ENDED_BY_SERVER = { phase: 'ended', error: null };
 
 /** What the client sent, closed, and requested, in the order it happened. */
@@ -26,7 +28,7 @@ const server = {
   /** `POST /end` is never answered. */
   endHangs: false,
   /** Answers for the next `POST /v1/access-tokens` calls; a new token once the list is empty. */
-  tokenReplies: [] as Array<number | typeof NETWORK_FAILURE>,
+  tokenReplies: [] as Array<number | typeof NETWORK_FAILURE | typeof MALFORMED_TOKEN>,
   tokensIssued: 0,
 };
 
@@ -181,6 +183,7 @@ async function fakeFetch(url: string, init: RequestInit): Promise<Response> {
   if (pathname === TOKEN_PATH) {
     const status = server.tokenReplies.shift() ?? 201;
     if (status === NETWORK_FAILURE) throw new TypeError('Failed to fetch');
+    if (status === MALFORMED_TOKEN) return { ok: true, status: 201, text: async () => '{}' } as Response;
     // This route answers without the common envelope.
     const body = status === 201
       ? { access_token: `token-${server.tokensIssued += 1}`, expires_at_ms: Date.now() + TOKEN_LIFETIME_MS }
@@ -379,6 +382,16 @@ describe('RealtimeTranslationSession access tokens', () => {
       const { session } = await reconnectWithExpiredToken(401);
       expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'Token refused with 401.' });
       expect(endRequests()).toHaveLength(1);
+    });
+
+    // Asking again would get the same answer, so the session stops instead of retrying forever.
+    it('stops when the answer has no token', async () => {
+      const { session } = await reconnectWithExpiredToken(MALFORMED_TOKEN);
+      expect(session.getSnapshot()).toMatchObject({
+        phase: 'error',
+        error: 'Access token response is missing access_token or expires_at_ms.',
+      });
+      expect(socketKinds()).toEqual(['result', 'audio']);
     });
 
     // 504: this app's server asked Tellus and got no answer in time.

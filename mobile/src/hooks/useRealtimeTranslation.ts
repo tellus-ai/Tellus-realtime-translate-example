@@ -3,15 +3,15 @@ import { AppState } from 'react-native';
 import type { StartConversationInput } from '../api/conversationApi';
 import { NativeMicrophone } from '../audio/NativeMicrophone';
 import { downloadRecording } from '../audio/downloadRecording';
+import { exampleApiBaseUrl } from '../config/exampleServer';
 import { realtimeSpeechConfig } from '../config/realtimeSpeechConfig';
 import { RealtimeTranslationSession } from '../realtime/RealtimeTranslationSession';
 
 export function useRealtimeTranslation() {
   const session = useMemo(
     () => new RealtimeTranslationSession(
-      realtimeSpeechConfig,
+      { ...realtimeSpeechConfig, apiBaseUrl: exampleApiBaseUrl(realtimeSpeechConfig.exampleApiUrl) },
       new NativeMicrophone(),
-      realtimeSpeechConfig.apiKey,
     ),
     [],
   );

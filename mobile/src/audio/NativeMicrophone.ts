@@ -6,8 +6,8 @@ export interface MicrophoneRecorder {
   readonly denoiseEnabled: boolean;
   setDenoiseEnabled(enabled: boolean): Promise<boolean>;
   prepare(clientVad: boolean): Promise<void>;
-  /** The engine approval on `/v1/audio` sends `apiKey` first and again for every renewal. */
-  authorize(socket: WebSocket, conversationId: string, apiKey: string, onError: (error: Error) => void): Promise<void>;
+  /** `getAccessToken` is called for the first approval and again for every renewal. */
+  authorize(socket: WebSocket, conversationId: string, getAccessToken: () => Promise<string>, onError: (error: Error) => void): Promise<void>;
   releaseAuthorization(): void;
   start(onFrame: (frame: AudioChunk) => void, onError: (error: Error) => void): Promise<void>;
   pause(): Promise<void>;
@@ -63,12 +63,11 @@ export class NativeMicrophone implements MicrophoneRecorder {
     }
   }
 
-  async authorize(socket: WebSocket, conversationId: string, apiKey: string, onError: (error: Error) => void): Promise<void> {
+  async authorize(socket: WebSocket, conversationId: string, getAccessToken: () => Promise<string>, onError: (error: Error) => void): Promise<void> {
     if (!this.capture) throw new Error('Audio capture is unavailable.');
     this.releaseAuthorization();
     this.authorization = attachEngineAuthorization(socket, this.capture, {
-      // The SDK names the credential an access token. The server takes the API key here.
-      conversationId, getAccessToken: () => apiKey, onError,
+      conversationId, getAccessToken, onError,
     });
     await this.authorization.ready;
   }
