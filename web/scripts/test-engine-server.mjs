@@ -10,6 +10,7 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
   if (process.env.TELLUS_ENGINE_TEST_LICENSE !== '1') throw new Error('Set TELLUS_ENGINE_TEST_LICENSE=1 for test-only engine artifacts');
   const require = createRequire(import.meta.url);
   const { signTestPermit } = require(resolve(engineRoot, 'scripts/ci/engine-authorization-fixture.js'));
+  const { createConversationApiMiddleware } = require('./conversation-api-middleware.cjs');
   const contentKey = Buffer.from(readFileSync(keyFile, 'utf8').trim(), 'hex');
   if (contentKey.length !== 32) throw new Error('Expected a 32-byte test content key');
   const registry = JSON.parse(readFileSync(resolve(modelDir, 'manifest.json'), 'utf8')).models;
@@ -18,11 +19,14 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
   const results = new Set();
   let denyRenewal = false;
   const mime = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm' };
+  // 브라우저 번들에는 API 키가 없다. 실제 미들웨어가 키를 붙여 아래 /v1 경로로 넘기는지 함께 검증한다.
+  let conversationApi = null;
   const server = createServer((request, response) => {
+    if (request.url.startsWith('/__tellus/api')) return conversationApi(request, response, () => { response.writeHead(404); response.end(); });
     const url = new URL(request.url, 'http://127.0.0.1');
     const reply = (value) => { response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); };
     if (request.method === 'POST') {
-      // REST는 API 키로, WebSocket은 /v1/access-tokens가 발급한 입장권으로만 연다.
+      // REST는 미들웨어가 붙인 API 키로, WebSocket은 /v1/access-tokens가 발급한 입장권으로만 연다.
       if (request.headers.authorization !== 'Bearer test-api-key') stats.errors.push(`Missing API key on ${url.pathname}`);
       if (url.pathname === '/v1/conversations') return reply({ conversation_id: 'conversation-1' });
       if (url.pathname === '/v1/access-tokens') return reply({ access_token: 'test-access-token', expires_at_ms: Date.now() + 900000 });
@@ -101,6 +105,7 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
   }));
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   const port = server.address().port;
+  conversationApi = createConversationApiMiddleware({ apiKey: 'test-api-key', httpBaseUrl: `http://127.0.0.1:${port}` });
   return {
     url: `http://127.0.0.1:${port}`, stats,
     disconnectAudio: () => { for (const socket of audio) socket.terminate(); },

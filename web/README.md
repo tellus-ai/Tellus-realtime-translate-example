@@ -26,8 +26,8 @@ SDK의 `vendor/web`에 엔진 `.mjs`·`.wasm`과 암호화 모델이 준비되�
 `.npmrc`의 `install-links=true`로 `.sdk/platforms/web` 패키지를 앱의 `node_modules`에 복사 설치합니다. SDK가 사용하는 엔진은 **0.4.13**입니다. 다운로드 서버는 `wasm32-emscripten` archive와 `.sha256` 파일을 모두 허용하고 게시해야 합니다. `.sdk/`는 setup이 관리하는 로컬 빌드 캐시이며 다른 SDK 버전이 들어 있으면 삭제 후 `npm run setup`을 다시 실행합니다.
 
 Set the API key issued in the Tellus API Console in `API_KEY` in `.env`, select two different languages, and start the session.
-The key cannot be entered or changed in the browser UI. Restart the development server after changing
-environment variables.
+The development server reads the key and keeps it; the key is not sent to the browser and cannot be entered or
+changed in the browser UI. Restart the development server after changing environment variables.
 
 The UI shows **Audio SDK: 사용 중 / 사용하지 않음** from the configured audio processing mode, independently of capture readiness. Start requires a
 successfully initialized audio-sdk capture; missing or failed SDK initialization is a session error before
@@ -54,25 +54,43 @@ Silero 기본 positive/negative threshold는 `0.5` / `0.35`, silence는 `550 ms`
 
 마이크는 HTTPS 또는 localhost에서 사용할 수 있습니다. 배포 origin은 Realtime Speech 서버에서 허용되어야 합니다. 탭이 숨겨지면 승인을 취소하고, 다시 보일 때 새 permit을 얻어 마이크를 재개합니다. SDK 초기화는 클릭 전에 가능하며 AudioContext는 캡처를 시작할 때 재개합니다.
 
-`API_KEY`는 빌드 시 클라이언트 번들에 포함됩니다. 브라우저에 배포하는 값에는 만료일을 지정한 API 키를 사용합니다.
+`API_KEY`는 브라우저 번들에 들어가지 않습니다. 개발 서버(`npm run dev`)와 preview 서버(`npm run preview`)의 프로세스만 읽습니다. 번들에는 키가 설정되어 있는지 여부(`VITE_API_KEY_CONFIGURED`)만 들어갑니다.
 
-## Access tokens
+## API key and access tokens
 
-A browser cannot set headers on a WebSocket, and the server refuses an API key in a URL. So this example
-opens both WebSockets with an access token:
+Anything a browser holds can be read by whoever opens the page, so the browser never gets the API key. The
+key stays in the Vite development and preview server, and the browser gets an access token that opens one
+Conversation for 15 minutes:
 
-1. `POST /v1/conversations` and `POST /v1/conversations/{id}/settings`, with the API key.
-2. `POST /v1/access-tokens` with the API key and `{"session_kind": "conversation", "session_id": "<id>"}`.
-3. `WS /v1/conversations/{id}/results?token=<access token>` and `WS /v1/audio?...&token=<access token>`.
+```text
+Browser                              Example server (Vite)                 Tellus
+POST /__tellus/api/v1/conversations ------> + Authorization: Bearer <API key> ---> POST /v1/conversations
+POST /__tellus/api/v1/conversations/{id}/settings ------------------------------> POST /v1/conversations/{id}/settings
+POST /__tellus/api/v1/access-tokens --------------------------------------------> POST /v1/access-tokens
+        <------------------------------------- { access_token, expires_at_ms }
+WS /v1/conversations/{id}/results?token=<access token> ------------------------------------------> Tellus
+WS /v1/audio?conversation_id={id}&audio_format=opus&token=<access token> -------------------------> Tellus
+POST /__tellus/api/v1/conversations/{id}/end -----------------------------------> POST /v1/conversations/{id}/end
+```
 
-A token lasts 15 minutes and opens only this Conversation. `src/api/accessTokens.ts` keeps the current one
-and issues the next when it is asked for a token that has less than a minute left: for a reconnect, and for
-each engine approval (`audio.authenticate`, `engine.renew`) that the audio SDK sends on `/v1/audio`. An open
-WebSocket is not closed when its token expires.
+- `scripts/conversation-api-middleware.cjs` is the server side. It forwards exactly these four calls to
+  `VITE_REALTIME_SPEECH_HTTP_URL` and adds the API key; any other path under `/__tellus/api` is `404`. It
+  returns the status and the body of Tellus unchanged, and answers `502` when Tellus could not be reached and
+  `504` when it did not answer within 15 seconds.
+- The browser sends no credential on these calls. The middleware accepts them only from this page: the
+  `Origin` has to be its own, and the request has to carry the `X-Tellus-Example-Api: 1` header.
+- The WebSockets go from the browser straight to Tellus. A browser cannot set headers on a WebSocket, and the
+  server refuses an API key in a URL, so both open with the access token in `token=`.
+- A token opens only this Conversation. `src/api/accessTokens.ts` keeps the current one and asks for the next
+  when it is asked for a token that has less than a minute left: for a reconnect, and for each engine
+  approval (`audio.authenticate`, `engine.renew`) that the audio SDK sends on `/v1/audio`. An open WebSocket
+  is not closed when its token expires.
 
-This example calls step 1 and 2 from the browser so that it runs without a backend of its own. In
-production, make those calls, and `POST /v1/conversations/{id}/end`, from your server and give the browser
-only the access token; the API key then never reaches the browser.
+**This middleware is the part to replace with your own backend.** It runs only in `npm run dev` and
+`npm run preview`; the static files in `dist/` contain no key and cannot start a session without a server that
+provides the same four routes. The middleware also does not know who its caller is: anyone who can reach the
+development server can start a Conversation on your key. A real backend checks its own login session first,
+and then makes these calls for that user.
 
 관련 공식 문서: [AudioWorklet 입력 프레임](https://developer.mozilla.org/en-US/docs/Web/API/AudioWorkletProcessor/process), [ORT WASM 환경 설정](https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html), [Emscripten Asyncify](https://emscripten.org/docs/porting/asyncify.html).
 
@@ -103,7 +121,7 @@ The session follows
 | Browser `online` event | A reconnect that is waiting runs at once. `offline` is ignored. |
 | Result reconnected | Connects with `after_order_seq` set to the last row that has its final transcript and translation. The server sends the finals stored after it again, so finals missed while the socket was closed arrive; previews from that time are lost. |
 | Stop | Sends `speech_gate_closed` (if the gate is open) and `idle`, waits up to 2 seconds for the last finals, closes `/v1/audio`, calls `POST /end`, and keeps Result open until `conversation.ended` or for 5 more seconds. |
-| REST `503` | Retries after 1, 2, and 5 seconds. A request that gets no response, which includes the 15-second request timeout, is retried only for `POST /end` and `POST /v1/access-tokens`. `POST /end` treats `410` and `404` as ended. When every retry fails, the example gives up; if the request was `POST /end`, the Conversation stays open until its state expires 24 hours after creation. |
+| REST `503` | Retries after 1, 2, and 5 seconds. A request that gets no response, which includes the 15-second request timeout and a `502` or `504` from the example server, is retried only for `POST /end` and `POST /v1/access-tokens`. `POST /end` treats `410` and `404` as ended. When every retry fails, the example gives up; if the request was `POST /end`, the Conversation stays open until its state expires 24 hours after creation. |
 
 A reconnect shows only in the status (`reconnecting` while `/v1/audio` is down) and in the connection state of
 each socket. The close code and reason are not shown. `error` holds the message that stopped the session; a
@@ -119,6 +137,8 @@ Source files:
 - `src/api/conversationApi.ts` and `src/api/httpClient.ts`: the `/v1` routes, `POST /end` statuses, and `503`
   retries.
 - `src/api/accessTokens.ts`: the access token of the Conversation.
+- `scripts/conversation-api-middleware.cjs`: the server routes that hold the API key. `npm run test:api-server`
+  checks them.
 
 Not implemented:
 
@@ -164,9 +184,10 @@ npm run test:engine-browser
 
 이 스크립트는 SDK를 경유하지 않는 `/v1` 서버 PCM16 계약 검사입니다. 실제 엔진 검증에는 `test:engine-browser`를 사용합니다.
 
-The test uses `API_KEY` from `.env` only as a Bearer token and never prints it. It creates a Conversation,
-saves its settings, issues an access token, verifies both WebSocket connections with that token and PCM16
-transmission, and then terminates the Conversation in `finally`.
+The test runs in Node.js, in the place of the example server and the browser together. It uses `API_KEY`
+from `.env` only as a Bearer token and never prints it. It creates a Conversation, saves its settings, issues
+an access token, verifies both WebSocket connections with that token and PCM16 transmission, and then
+terminates the Conversation in `finally`.
 
 ```bash
 npm run test:live

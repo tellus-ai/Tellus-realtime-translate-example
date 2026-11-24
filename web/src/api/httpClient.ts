@@ -37,6 +37,15 @@ function unwrapEnvelope<T>(value: unknown): T {
   return value as T;
 }
 
+/**
+ * True when nobody answered: the request failed or timed out here (`null`), or this example's
+ * server reports that Tellus could not be reached (`502`) or did not answer in time (`504`).
+ * Tellus may still have applied such a request.
+ */
+export function gotNoResponse(status: number | null): boolean {
+  return status === null || status === 502 || status === 504;
+}
+
 const REQUEST_TIMEOUT_MS = 15_000;
 // REST error responses carry no Retry-After header, so temporary failures use fixed waits.
 const RETRY_DELAYS_MS = [1_000, 2_000, 5_000];
@@ -53,16 +62,16 @@ export interface RequestOptions {
 /** Sends the request again after a 503, up to three more times. Other statuses are not retried. */
 export async function requestJson<T>(
   url: string,
-  apiKey: string,
   init: RequestInit,
   { retryNetworkFailure = false }: RequestOptions = {},
 ): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await requestOnce<T>(url, apiKey, init);
+      return await requestOnce<T>(url, init);
     } catch (error) {
       const status = error instanceof RealtimeApiError ? error.status : undefined;
-      const temporary = status === 503 || (status === null && retryNetworkFailure);
+      const temporary = status === 503 ||
+        (status !== undefined && gotNoResponse(status) && retryNetworkFailure);
       if (!temporary || attempt >= RETRY_DELAYS_MS.length) throw error;
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
     }
@@ -71,7 +80,6 @@ export async function requestJson<T>(
 
 async function requestOnce<T>(
   url: string,
-  apiKey: string,
   init: RequestInit,
 ): Promise<T> {
   // Without a time limit a request can stay pending forever, and Stop waits for `POST /end`.
@@ -86,9 +94,11 @@ async function requestOnce<T>(
     response = await fetch(url, {
       ...init,
       signal: controller.signal,
+      // No credential: these calls go to this example's own server, which holds the API key
+      // (scripts/conversation-api-middleware.cjs). The header shows that this page sent them.
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey.trim()}`,
+        'X-Tellus-Example-Api': '1',
         ...init.headers,
       },
     });

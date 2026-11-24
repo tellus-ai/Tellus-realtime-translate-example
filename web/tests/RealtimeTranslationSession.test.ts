@@ -3,7 +3,7 @@ import type { MicrophoneRecorder } from '../src/audio/BrowserMicrophone';
 import type { AudioChunk } from '@tellus-ai/audio-sdk-web';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 
-const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test' };
+const endpoints = { apiBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test' };
 const END_PATH = '/v1/conversations/conversation-1/end';
 const TOKEN_PATH = '/v1/access-tokens';
 const TOKEN_LIFETIME_MS = 15 * 60_000;
@@ -237,7 +237,7 @@ function result(eventType: string, orderSeq: number, text: string, targetLanguag
 
 function createSession() {
   const microphone = new FakeMicrophone();
-  const session = new RealtimeTranslationSession(endpoints, microphone, 'api-key');
+  const session = new RealtimeTranslationSession(endpoints, microphone);
   return { session, microphone };
 }
 
@@ -311,11 +311,9 @@ describe('RealtimeTranslationSession access tokens', () => {
     expect(audioSocket.url).toBe(
       'wss://example.test/v1/audio?conversation_id=conversation-1&audio_format=opus&token=token-1',
     );
-    // The API key never goes into a WebSocket URL.
-    expect(FakeSocket.instances.some((socket) => socket.url.includes('api-key'))).toBe(false);
   });
 
-  it('sends the API key on REST calls and names the Conversation when asking for a token', async () => {
+  it('holds no API key: the REST calls go to this app\'s server without a credential', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     await startSession();
     const tokenCall = fetchSpy.mock.calls.find(([url]) => String(url).endsWith(TOKEN_PATH));
@@ -323,8 +321,11 @@ describe('RealtimeTranslationSession access tokens', () => {
       session_kind: 'conversation',
       session_id: 'conversation-1',
     });
-    for (const [, init] of fetchSpy.mock.calls) {
-      expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer api-key');
+    expect(fetchSpy.mock.calls).toHaveLength(3);
+    for (const [url, init] of fetchSpy.mock.calls) {
+      expect(String(url).startsWith(`${endpoints.apiBaseUrl}/v1/`)).toBe(true);
+      // The server adds the key. The header only shows that this page sent the request.
+      expect(init?.headers).toEqual({ 'Content-Type': 'application/json', 'X-Tellus-Example-Api': '1' });
     }
   });
 
@@ -380,9 +381,13 @@ describe('RealtimeTranslationSession access tokens', () => {
       expect(endRequests()).toHaveLength(1);
     });
 
-    it('keeps reconnecting with backoff when the request gets no response', async () => {
+    // 504: this app's server asked Tellus and got no answer in time.
+    it.each([
+      ['the request gets no response', NETWORK_FAILURE],
+      ['this app\'s server answers 504', 504],
+    ] as const)('keeps reconnecting with backoff when %s', async (_name, failure) => {
       // The request itself is repeated after 1, 2, and 5 seconds before the attempt gives up.
-      const failures = Array<typeof NETWORK_FAILURE>(4).fill(NETWORK_FAILURE);
+      const failures = Array<typeof failure>(4).fill(failure);
       const { session } = await reconnectWithExpiredToken(...failures);
       await vi.advanceTimersByTimeAsync(8_000);
       expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', error: null });
@@ -1226,7 +1231,7 @@ describe('disabled SDK configuration', () => {
   it('fails before preparing capture or creating a conversation', async () => {
     const microphone = new FakeMicrophone();
     const prepare = vi.spyOn(microphone, 'prepare');
-    const session = new RealtimeTranslationSession({ ...endpoints, audioSdkEnabled: false }, microphone, 'api-key');
+    const session = new RealtimeTranslationSession({ ...endpoints, audioSdkEnabled: false }, microphone);
     await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
     await flush();
     expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: 'Audio SDK is required. Enable audio-sdk before starting a session.' });

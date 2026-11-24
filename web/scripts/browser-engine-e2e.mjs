@@ -40,7 +40,7 @@ const errors = [];
 const warnings = [];
 try {
   await build({ root, mode: 'engine-integration', define: {
-    'import.meta.env.VITE_API_KEY': JSON.stringify('test-api-key'),
+    'import.meta.env.VITE_API_KEY_CONFIGURED': JSON.stringify('true'),
     'import.meta.env.VITE_REALTIME_SPEECH_HTTP_URL': JSON.stringify(server.url),
     'import.meta.env.VITE_REALTIME_SPEECH_WS_URL': JSON.stringify(server.url.replace('http:', 'ws:')),
     'import.meta.env.VITE_TELLUS_DENOISE': JSON.stringify(String(streamModels)),
@@ -212,7 +212,7 @@ try {
   assert.equal(server.stats.errors.length, 0);
   assert.deepEqual(errors, []);
   await build({ root, mode: 'engine-integration', define: {
-    'import.meta.env.VITE_API_KEY': JSON.stringify('test-api-key'),
+    'import.meta.env.VITE_API_KEY_CONFIGURED': JSON.stringify('true'),
     'import.meta.env.VITE_REALTIME_SPEECH_HTTP_URL': JSON.stringify(server.url),
     'import.meta.env.VITE_REALTIME_SPEECH_WS_URL': JSON.stringify(server.url.replace('http:', 'ws:')),
     'import.meta.env.VITE_TELLUS_AUDIO_SDK_ENABLED': JSON.stringify('false'),

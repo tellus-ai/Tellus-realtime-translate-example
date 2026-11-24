@@ -3,7 +3,12 @@ import type { RealtimeAudioFormat } from '../audio/RealtimeAudioFormat';
 
 export interface RealtimeEndpoints {
   audioSdkEnabled?: boolean;
-  httpBaseUrl: string;
+  /**
+   * This example's own server routes. They forward the calls below to Tellus with the API key,
+   * so that the key is never in the browser.
+   */
+  apiBaseUrl: string;
+  /** Tellus itself. The browser opens the WebSockets directly, with an access token. */
   websocketBaseUrl: string;
 }
 
@@ -28,14 +33,10 @@ export interface IssuedAccessToken {
   expiresAtMs: number;
 }
 
-export async function createConversation(
-  endpoints: RealtimeEndpoints,
-  apiKey: string,
-): Promise<string> {
+export async function createConversation(endpoints: RealtimeEndpoints): Promise<string> {
   // No body: the settings are saved by the next call.
   const response = await requestJson<ConversationResponse>(
-    `${endpoints.httpBaseUrl}/v1/conversations`,
-    apiKey,
+    `${endpoints.apiBaseUrl}/v1/conversations`,
     { method: 'POST' },
   );
   if (!response.conversation_id) {
@@ -46,15 +47,13 @@ export async function createConversation(
 
 export async function saveInterpretationSettings(
   endpoints: RealtimeEndpoints,
-  apiKey: string,
   conversationId: string,
   sourceLanguage: string,
   targetLanguage: string,
   clientVad: boolean,
 ): Promise<void> {
   await requestJson(
-    `${endpoints.httpBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/settings`,
-    apiKey,
+    `${endpoints.apiBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/settings`,
     {
       method: 'POST',
       body: JSON.stringify({
@@ -66,17 +65,15 @@ export async function saveInterpretationSettings(
 }
 
 /**
- * Issues an access token that opens the WebSockets of one Conversation. A browser cannot send the
- * API key on a WebSocket, and the server refuses a key in the URL.
+ * Asks this example's server for an access token that opens the WebSockets of one Conversation.
+ * The token is the only credential the browser ever holds.
  */
 export async function issueAccessToken(
   endpoints: RealtimeEndpoints,
-  apiKey: string,
   conversationId: string,
 ): Promise<IssuedAccessToken> {
   const response = await requestJson<AccessTokenResponse>(
-    `${endpoints.httpBaseUrl}/v1/access-tokens`,
-    apiKey,
+    `${endpoints.apiBaseUrl}/v1/access-tokens`,
     {
       method: 'POST',
       body: JSON.stringify({ session_kind: 'conversation', session_id: conversationId }),
@@ -93,13 +90,11 @@ export async function issueAccessToken(
 /** Resolves once the Conversation is over, whether or not this call was the one that ended it. */
 export async function endConversation(
   endpoints: RealtimeEndpoints,
-  apiKey: string,
   conversationId: string,
 ): Promise<void> {
   try {
     await requestJson(
-      `${endpoints.httpBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/end`,
-      apiKey,
+      `${endpoints.apiBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/end`,
       { method: 'POST' },
       { retryNetworkFailure: true },
     );

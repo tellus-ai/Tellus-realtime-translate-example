@@ -30,7 +30,7 @@ export function TranslationExample() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const audioSdkEnabled = realtimeSpeechConfig.audioSdkEnabled !== false;
   const clientVad = vadSelected && !audioSdkEnabled;
-  const tokenConfigured = Boolean(realtimeSpeechConfig.apiKey);
+  const tokenConfigured = realtimeSpeechConfig.apiKeyConfigured;
   const active = ['preparing-audio', 'creating', 'configuring', 'connecting', 'recording', 'paused', 'reconnecting', 'stopping'].includes(realtime.phase);
   const busy = ['preparing-audio', 'creating', 'configuring', 'connecting', 'stopping'].includes(realtime.phase);
 
@@ -52,7 +52,7 @@ export function TranslationExample() {
       </header>
 
       <section className="setup-panel">
-        {!tokenConfigured && <p className="error" role="alert">Set API_KEY in web/.env.</p>}
+        {!tokenConfigured && <p className="error" role="alert">Set API_KEY in web/.env and restart the development server.</p>}
         <label>
           Source Language
           <select value={sourceLanguage} disabled={active} onChange={(event) => setSourceLanguage(event.target.value)}>

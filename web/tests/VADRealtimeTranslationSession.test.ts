@@ -65,7 +65,7 @@ function chunk(payload: number[], gateEvent?: string, validSampleCount = 320): A
   };
 }
 
-const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test' };
+const endpoints = { apiBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test' };
 const input = { sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true };
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 const status = (value: string | ArrayBuffer) => JSON.parse(value as string);
@@ -89,7 +89,7 @@ describe('SDK output transport', () => {
     const microphone = new FakeMicrophone();
     let approved!: () => void;
     microphone.authorization = new Promise((resolve) => { approved = resolve; });
-    const session = new RealtimeTranslationSession(endpoints, microphone, 'api-key');
+    const session = new RealtimeTranslationSession(endpoints, microphone);
     const starting = session.start(input);
     await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2));
     expect(microphone.started).toBe(false);
@@ -104,7 +104,7 @@ describe('SDK output transport', () => {
 
   it('ignores gate events with client VAD disabled and flushes unchanged Opus bytes before idle', async () => {
     const microphone = new FakeMicrophone();
-    const session = new RealtimeTranslationSession(endpoints, microphone, 'api-key');
+    const session = new RealtimeTranslationSession(endpoints, microphone);
     await session.start(input);
     microphone.emit(chunk([1, 2, 3], 'speech_gate_opened'));
     microphone.emit(chunk([9], 'speech_gate_closed'));
@@ -121,7 +121,7 @@ describe('SDK output transport', () => {
 
   it('suppresses late output while paused and resumes with client VAD disabled', async () => {
     const microphone = new FakeMicrophone();
-    const session = new RealtimeTranslationSession(endpoints, microphone, 'api-key');
+    const session = new RealtimeTranslationSession(endpoints, microphone);
     await session.start(input);
     microphone.emit(chunk([1], 'speech_gate_opened'));
     await session.pause();
@@ -137,7 +137,7 @@ describe('SDK output transport', () => {
 
   it('surfaces SDK processing failures and stops late output', async () => {
     const microphone = new FakeMicrophone();
-    const session = new RealtimeTranslationSession(endpoints, microphone, 'api-key');
+    const session = new RealtimeTranslationSession(endpoints, microphone);
     await session.start(input);
     const socket = FakeSocket.instances[1]!;
     microphone.fail(new Error('tellus_audio_processing_failed'));
@@ -150,7 +150,7 @@ describe('SDK output transport', () => {
 
   it('overrides requested client VAD without changing the Rust Opus codec', async () => {
     const microphone = new FakeMicrophone();
-    const session = new RealtimeTranslationSession(endpoints, microphone, 'api-key');
+    const session = new RealtimeTranslationSession(endpoints, microphone);
     await session.start(input);
     expect(microphone.preparedVad).toBe(false);
     expect(FakeSocket.instances[1]?.url).toContain('audio_format=opus');

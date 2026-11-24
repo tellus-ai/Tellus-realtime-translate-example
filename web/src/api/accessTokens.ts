@@ -5,9 +5,10 @@ import { issueAccessToken, type IssuedAccessToken, type RealtimeEndpoints } from
 const REFRESH_BEFORE_EXPIRY_MS = 60_000;
 
 /**
- * The access tokens of one Conversation. A token opens any number of connections to its
- * Conversation until it expires, so one is reused for both WebSockets and for the engine approval
- * on `/v1/audio`. An open WebSocket is not closed when its token expires.
+ * The access tokens of one Conversation, issued by this example's server. A token opens any
+ * number of connections to its Conversation until it expires, so one is reused for both
+ * WebSockets and for the engine approval on `/v1/audio`. An open WebSocket is not closed when its
+ * token expires.
  */
 export class ConversationAccessTokens {
   private issued: IssuedAccessToken | null = null;
@@ -15,7 +16,6 @@ export class ConversationAccessTokens {
 
   constructor(
     private readonly endpoints: RealtimeEndpoints,
-    private readonly apiKey: string,
     private readonly conversationId: string,
   ) {}
 
@@ -25,7 +25,7 @@ export class ConversationAccessTokens {
       return Promise.resolve(this.issued.token);
     }
     // Callers that ask while a token is being issued share that one.
-    this.issuing ??= issueAccessToken(this.endpoints, this.apiKey, this.conversationId)
+    this.issuing ??= issueAccessToken(this.endpoints, this.conversationId)
       .then((issued) => {
         this.issued = issued;
         return issued.token;

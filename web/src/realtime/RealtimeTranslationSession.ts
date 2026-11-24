@@ -8,7 +8,7 @@ import {
   type RealtimeEndpoints,
   type StartConversationInput,
 } from '../api/conversationApi';
-import { RealtimeApiError } from '../api/httpClient';
+import { gotNoResponse, RealtimeApiError } from '../api/httpClient';
 import type { MicrophoneRecorder } from '../audio/BrowserMicrophone';
 import { OggOpusRecording, type AudioRecordingFile } from '../audio/OggOpusRecording';
 import type { AudioChunk } from '@tellus-ai/audio-sdk-web';
@@ -59,7 +59,7 @@ export class RealtimeTranslationSession {
   private listeners = new Set<Listener>();
   private recording = new OggOpusRecording();
   private sockets: Record<RealtimeSocket, WebSocket | null> = { result: null, audio: null };
-  // A browser cannot send the API key on a WebSocket, so both sockets open with an access token.
+  // The browser has no API key: both sockets open with an access token from this app's server.
   private accessTokens: ConversationAccessTokens | null = null;
   // The server explains an error close with a `system.error` just before it.
   private lastSocketError: Record<RealtimeSocket, SystemError | null> = { result: null, audio: null };
@@ -87,7 +87,6 @@ export class RealtimeTranslationSession {
   constructor(
     private readonly endpoints: RealtimeEndpoints,
     private readonly microphone: MicrophoneRecorder,
-    private readonly apiKey: string,
   ) { this.snapshot.denoise.enabled = microphone.denoiseEnabled; }
 
   subscribe(listener: Listener): () => void {
@@ -125,7 +124,6 @@ export class RealtimeTranslationSession {
   }
 
   async start(input: StartConversationInput): Promise<void> {
-    if (!this.apiKey) throw new Error('Set the API_KEY environment variable.');
     if (!input.sourceLanguage || !input.targetLanguage) throw new Error('Select two languages.');
     if (input.sourceLanguage === input.targetLanguage) throw new Error('Select two different languages.');
     if (!['idle', 'ended', 'error'].includes(this.snapshot.phase) || this.snapshot.denoise.updating) return;
@@ -158,15 +156,14 @@ export class RealtimeTranslationSession {
       if (!this.microphone.audioSdkReady) throw new Error('Audio SDK is required. Non-SDK audio capture is not supported.');
       this.update({ phase: 'creating', audioSdkReady: true, denoise: { ...this.snapshot.denoise, applied: this.microphone.denoiseEnabled } });
 
-      const conversationId = await createConversation(this.endpoints, this.apiKey);
+      const conversationId = await createConversation(this.endpoints);
       if (generation !== this.generation) {
-        await endConversation(this.endpoints, this.apiKey, conversationId).catch(() => {});
+        await endConversation(this.endpoints, conversationId).catch(() => {});
         return;
       }
       this.update({ phase: 'configuring', conversationId });
       await saveInterpretationSettings(
         this.endpoints,
-        this.apiKey,
         conversationId,
         input.sourceLanguage,
         input.targetLanguage,
@@ -174,7 +171,7 @@ export class RealtimeTranslationSession {
       );
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
-      this.accessTokens = new ConversationAccessTokens(this.endpoints, this.apiKey, conversationId);
+      this.accessTokens = new ConversationAccessTokens(this.endpoints, conversationId);
       const accessToken = await this.currentAccessToken();
       if (generation !== this.generation) return;
       // The server accepts the sockets in either order. Result goes first here, so that it is
@@ -295,9 +292,7 @@ export class RealtimeTranslationSession {
     );
     await this.cleanupLocal({ keepResultSocket: true });
     try {
-      if (conversationId && this.apiKey) {
-        await endConversation(this.endpoints, this.apiKey, conversationId);
-      }
+      if (conversationId) await endConversation(this.endpoints, conversationId);
       // `conversation.ended` and the HTTP response arrive in either order, and results can
       // still arrive until then. `handleSocketMessage` closes the socket on `conversation.ended`.
       await this.waitForSnapshot(
@@ -571,7 +566,7 @@ export class RealtimeTranslationSession {
     if (status === 404 || status === 410) {
       // The Conversation is gone or has ended.
       this.finishEnded();
-    } else if (status === null || status === 503) {
+    } else if (gotNoResponse(status) || status === 503) {
       // No response, or temporarily unavailable: try again as after a lost connection.
       this.scheduleReconnectAttempt(reconnectDelayMs(this.reconnectAttempt));
     } else {
@@ -669,8 +664,8 @@ export class RealtimeTranslationSession {
       .then(async () => {
         // The error shows first: `POST /end` can take long when it is retried.
         this.update({ phase: 'error', error: message });
-        if (shouldEndConversation && conversationId && this.apiKey) {
-          await endConversation(this.endpoints, this.apiKey, conversationId).catch(() => {});
+        if (shouldEndConversation && conversationId) {
+          await endConversation(this.endpoints, conversationId).catch(() => {});
         }
       })
       .finally(() => {

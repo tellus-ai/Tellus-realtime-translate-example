@@ -14,9 +14,9 @@ None of the apps depend on local Realtime Speech server code. All of them connec
 Each app has its own packages and realtime communication implementation, with no imports between them.
 Each app reads `API_KEY` from its local `.env` file and sends it as
 `Authorization: Bearer <API key>` on the REST calls. The mobile and desktop examples send the
-same header when they open the WebSockets. A browser cannot set WebSocket headers, so the web
-example asks the server for an access token and opens the WebSockets with that; see
-[Base URLs and authentication](#base-urls-and-authentication).
+same header when they open the WebSockets. In the web example the key stays in the development
+server: the browser calls that server, and opens the WebSockets with an access token that the
+server gets for it; see [Base URLs and authentication](#base-urls-and-authentication).
 
 ## 플랫폼별 SDK 설치
 
@@ -84,14 +84,22 @@ number of connections to its Conversation in that time.
 
 In production, keep the API key on your server: let the server create,
 configure, and end the Conversation and issue the token, and give the client
-only the token. The examples hold the key in the app so that they run without a
-backend of their own:
+only the token. Whatever a client holds can be read by its user: a key in a web
+bundle by anyone who opens the page, a key in a mobile or desktop app by anyone
+who has the app.
 
-| Example | REST calls | WebSockets |
-| --- | --- | --- |
-| Web | API key from the browser bundle | Access token in `token=`, issued by the browser with the API key |
-| Mobile | API key | API key in the `Authorization` header |
-| Desktop | API key, from the Electron main process | API key in the `Authorization` header |
+| Example | Who holds the API key | REST calls | WebSockets |
+| --- | --- | --- | --- |
+| Web | The Vite development server, not the browser | The browser calls the development server, which adds the API key and forwards the call | Access token in `token=`, issued through the development server |
+| Mobile | The app | API key | API key in the `Authorization` header |
+| Desktop | The Electron main process | API key | API key in the `Authorization` header |
+
+The web example shows the production structure, with its development server in
+the place of your backend; see its
+[README](./web/README.md#api-key-and-access-tokens). The mobile and desktop
+examples hold the key in the app so that they run without a backend of their
+own. Do not ship a key that way: move the same four calls to your server and
+give the app an access token, as the web example does.
 
 ### Conversation flow
 
