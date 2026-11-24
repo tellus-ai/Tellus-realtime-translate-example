@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { createServer, request: httpRequest } = require('node:http');
+const { Readable } = require('node:stream');
 const { test } = require('node:test');
 const { createConversationApiMiddleware } = require('./conversation-api-middleware.cjs');
 
@@ -171,4 +172,46 @@ test('leaves every other path to the next handler', async t => {
     assert.equal(await response.text(), 'next', path);
   }
   assert.deepEqual(tellus.calls, []);
+});
+
+/** Calls the middleware the way the server would for a caller at `remoteAddress`. */
+function callFrom(middleware, remoteAddress, path = '/__tellus/api/v1/conversations') {
+  return new Promise(resolve => {
+    const request = Object.assign(Readable.from([]), {
+      url: path, method: 'POST', headers: { host: 'dev.example', 'x-tellus-example-api': '1' }, socket: { remoteAddress },
+    });
+    const response = {
+      headersSent: false,
+      writeHead(status) { this.status = status; this.headersSent = true; },
+      end(body) { resolve({ status: this.status, body: JSON.parse(body) }); },
+    };
+    middleware(request, response, () => resolve({ status: 'next' }));
+  });
+}
+
+test('accepts calls only from this computer, unless TELLUS_EXAMPLE_API_CLIENTS lists the caller', async t => {
+  const tellus = await startTellus(t);
+  const refused = [];
+  const options = { apiKey: API_KEY, httpBaseUrl: origin(tellus.server), onRefusedClient: address => refused.push(address) };
+  const local = createConversationApiMiddleware(options);
+  // A simulator, an emulator and `adb reverse` all reach the server through loopback.
+  for (const address of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
+    assert.equal((await callFrom(local, address)).status, 200, address);
+  }
+  // Another device on the network gets nothing, not even whether a route exists.
+  for (const path of ['/__tellus/api/v1/conversations', '/__tellus/api/v1/terminology']) {
+    const answer = await callFrom(local, '::ffff:192.168.0.12', path);
+    assert.equal(answer.status, 403, path);
+    assert.match(answer.body.message[0], /TELLUS_EXAMPLE_API_CLIENTS/);
+  }
+  // The server log names each refused address once.
+  assert.deepEqual(refused, ['192.168.0.12']);
+  assert.equal(tellus.calls.length, 3);
+
+  const listed = createConversationApiMiddleware({ ...options, allowedClients: ' 192.168.0.12 , ::ffff:10.0.0.5,' });
+  assert.equal((await callFrom(listed, '::ffff:192.168.0.12')).status, 200);
+  assert.equal((await callFrom(listed, '10.0.0.5')).status, 200);
+  assert.equal((await callFrom(listed, '192.168.0.13')).status, 403);
+  // Other paths still pass to the next handler, whoever calls.
+  assert.equal((await callFrom(listed, '192.168.0.13', '/index.html')).status, 'next');
 });

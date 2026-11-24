@@ -16,7 +16,9 @@ function writeRuntimeEnv(dotenv: string): string {
   root = mkdtempSync(join(tmpdir(), 'tellus-runtime-env-'));
   mkdirSync(join(root, 'scripts'));
   mkdirSync(join(root, 'dist'));
-  copyFileSync(join(__dirname, '../scripts/write-runtime-env.mjs'), join(root, 'scripts/write-runtime-env.mjs'));
+  for (const script of ['write-runtime-env.mjs', 'runtime-settings.mjs']) {
+    copyFileSync(join(__dirname, '../scripts', script), join(root, 'scripts', script));
+  }
   writeFileSync(join(root, '.env'), dotenv);
   execFileSync(process.execPath, [join(root, 'scripts/write-runtime-env.mjs')], { stdio: 'pipe' });
   const target = join(root, 'dist/runtime.env');

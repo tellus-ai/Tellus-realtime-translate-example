@@ -48,7 +48,9 @@ against the committed lockfile. A direct `npm install` or `npm ci` requires expo
 `npm run dev` starts the Vite dev server and opens it inside Electron. Renderer changes hot-reload;
 restart `npm run dev` after changing `electron/` or `.env`. The dev server is also the example API server
 that holds `API_KEY`. `npm start` runs the last `npm run build` output without the dev server, the same way a
-packaged app does, so it needs `TELLUS_EXAMPLE_API_URL`: a server that provides the same four routes.
+packaged app does: it reads the settings that the build copied to `dist/runtime.env`, and it needs
+`TELLUS_EXAMPLE_API_URL`, a server that provides the same four routes. Run `npm run build` again after
+changing `.env`.
 
 On macOS the app asks for microphone access the first time you press **Start**.
 
@@ -150,9 +152,10 @@ POST /__tellus/api/v1/conversations/{id}/end -----------------------------------
 - `npm start` and a packaged app have no dev server. They send the four calls to `TELLUS_EXAMPLE_API_URL`,
   with the same paths after it (for example `https://backend.example.com/__tellus/api/v1/conversations`).
 
-**This middleware is the part to replace with your own backend.** It does not know who its caller is:
-anyone who can reach the dev server (it listens on `127.0.0.1` only) can start a Conversation on your key. A
-real backend checks its own login session first, and then makes these calls for that user.
+**This middleware is the part to replace with your own backend.** The dev server listens on `127.0.0.1`
+only, and the middleware also refuses any caller that is not this computer (loopback). Beyond that it does not
+know who its caller is: any program on this computer can start a Conversation on your key. A real backend checks
+its own login session first, and then makes these calls for that user.
 
 ## Error Handling and Reconnects
 
@@ -277,9 +280,12 @@ Any other error from the module, such as a final `engine.denied` (`engine_access
 | `TELLUS_AUDIO_DOWNLOAD_BASE_URL` | public speech HTTP URL | Realtime Speech artifact token API for native engine downloads |
 | `TELLUS_AUDIO_ENGINE_TOKEN` | | Existing Tellus-issued customer installation token; installation only |
 
-During development the main process reads `.env` next to `package.json` and takes only
-`REALTIME_SPEECH_WS_URL`, `TELLUS_EXAMPLE_API_URL`, and `TELLUS_AUDIO_SDK_ENABLED` from it. Variables already set in
-the process environment take precedence. Vite does not load `.env` for the renderer (`envDir: false`).
+The Electron main process never opens `.env`, which also holds `API_KEY`. Under `npm run dev`,
+`scripts/dev.mjs` reads it and passes only `REALTIME_SPEECH_WS_URL`, `TELLUS_EXAMPLE_API_URL`, and
+`TELLUS_AUDIO_SDK_ENABLED` to Electron (`scripts/runtime-settings.mjs`), and removes `API_KEY` and the installation
+credentials from its environment even when the shell sets them. `npm start` and a packaged app read the same keys
+from `dist/runtime.env`. Variables already set in the process environment take precedence. Vite does not load
+`.env` for the renderer (`envDir: false`).
 
 ## Security Defaults
 

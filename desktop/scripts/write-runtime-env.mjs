@@ -1,15 +1,12 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { parseEnv } from 'node:util';
+import { writeFileSync } from 'node:fs';
+import { pickRuntimeSettings, readDotenv } from './runtime-settings.mjs';
 
-// A packaged app reads dist/runtime.env instead of .env. Only the keys the app uses at runtime are
-// copied. API_KEY is never among them: the app gets an access token from TELLUS_EXAMPLE_API_URL,
-// the server that holds the key. TELLUS_AUDIO_ENGINE_TOKEN is needed only by npm install.
-const RUNTIME_KEYS = ['REALTIME_SPEECH_WS_URL', 'TELLUS_EXAMPLE_API_URL', 'TELLUS_AUDIO_SDK_ENABLED'];
-const source = new URL('../.env', import.meta.url);
+// A packaged app, and `npm start`, read dist/runtime.env. Only the keys the app uses at runtime are
+// copied (RUNTIME_KEYS). API_KEY is never among them: the app gets an access token from
+// TELLUS_EXAMPLE_API_URL, the server that holds the key. TELLUS_AUDIO_ENGINE_TOKEN is needed only by npm install.
 const target = new URL('../dist/runtime.env', import.meta.url);
-
-const env = existsSync(source) ? parseEnv(readFileSync(source, 'utf8')) : {};
-const lines = RUNTIME_KEYS.filter((key) => env[key]).map((key) => `${key}=${env[key]}`);
+const settings = pickRuntimeSettings(readDotenv(new URL('../.env', import.meta.url)));
+const lines = Object.entries(settings).map(([key, value]) => `${key}=${value}`);
 writeFileSync(target, lines.length > 0 ? `${lines.join('\n')}\n` : '');
 
-console.log(`Wrote ${lines.length} runtime setting(s) to dist/runtime.env: ${lines.map((line) => line.split('=')[0]).join(', ') || 'none'}`);
+console.log(`Wrote ${lines.length} runtime setting(s) to dist/runtime.env: ${Object.keys(settings).join(', ') || 'none'}`);

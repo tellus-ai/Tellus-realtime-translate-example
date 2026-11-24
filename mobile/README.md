@@ -55,7 +55,9 @@ POST /__tellus/api/v1/conversations/{id}/end ───────────�
 - 서버 주소는 녹음 다운로드와 같은 방법(React Native `SourceCode`의 HTTP(S) 번들 URL 또는 Expo `hostUri`)으로 찾는다. Metro 없이 실행하는 빌드에서는 `.env`의 `TELLUS_EXAMPLE_API_URL`에 같은 네 경로를 제공하는 서버 주소를 지정한다(예: `https://your-backend.example/tellus`). 둘 다 없으면 Start가 오류를 표시한다.
 - 입장권은 이 Conversation만 연다. `src/api/accessTokens.ts`가 현재 입장권을 보관하고, 남은 시간이 1분 이하일 때 요청을 받으면 새로 발급받는다. 재연결과, SDK가 `/v1/audio`에서 보내는 엔진 승인(`audio.authenticate`, `engine.renew`)마다 요청한다. 열린 socket은 입장권이 만료되어도 닫히지 않는다.
 
-**이 middleware가 실제 백엔드로 바꿀 부분이다.** middleware는 호출한 사람이 누구인지 확인하지 않는다. 그리고 Metro는 기기가 접속할 수 있도록 로컬 네트워크에서 대기하므로, 같은 네트워크에서 Metro 포트에 접근할 수 있는 사람은 누구나 이 키로 Conversation을 시작할 수 있다(키를 읽을 수는 없다). 실제 서비스의 백엔드는 자체 로그인 세션을 먼저 확인한 뒤 그 사용자를 위해 이 호출을 한다.
+Metro는 기기가 접속할 수 있도록 로컬 네트워크에서 대기한다. 그래서 middleware는 이 Mac에서 온 호출(loopback)만 받는다. iOS 시뮬레이터, Android 에뮬레이터, `adb reverse tcp:8081 tcp:8081`로 연결한 Android 기기는 loopback으로 들어오므로 설정 없이 동작한다. Wi-Fi로 접속하는 실기기는 그 기기의 IP를 `.env`의 `TELLUS_EXAMPLE_API_CLIENTS`에 쉼표로 구분해 적는다. 다른 주소의 호출은 경로와 관계없이 `403`이고, Metro 터미널에 거절한 주소를 주소마다 한 번 표시하므로 추가할 IP를 거기서 확인할 수 있다. 같은 Wi-Fi의 다른 사람은 이 키를 쓸 수 없다. 단, 허용한 IP를 다른 기기가 쓰면 그 기기도 호출할 수 있다.
+
+**이 middleware가 실제 백엔드로 바꿀 부분이다.** IP 허용 목록은 개발용 방어일 뿐이고, middleware는 호출한 사람이 누구인지 확인하지 않는다. 실제 서비스의 백엔드는 자체 로그인 세션을 먼저 확인한 뒤 그 사용자를 위해 이 호출을 한다.
 
 ```sh
 npm run verify:pre-commit

@@ -19,9 +19,35 @@ const ROUTES = [
 // The largest settings body that Tellus accepts.
 const MAX_BODY_BYTES = 128_000;
 
-function createConversationApiMiddleware({ apiKey, httpBaseUrl, timeoutMs = 15_000 }) {
+/** The caller's IP address. A dual-stack server reports an IPv4 caller as `::ffff:192.168.0.12`. */
+function clientAddress(request) {
+  return normalizeAddress((request.socket && request.socket.remoteAddress) || '');
+}
+function normalizeAddress(address) {
+  const value = address.trim();
+  return value.startsWith('::ffff:') ? value.slice('::ffff:'.length) : value;
+}
+function isLoopback(address) {
+  return address === '::1' || /^127\./.test(address);
+}
+
+function warnRefusedClient(address) {
+  console.warn(`[tellus] Refused a Conversation API call from ${address}. To allow that device, add the address `
+    + 'to TELLUS_EXAMPLE_API_CLIENTS in web/.env and restart the development server.');
+}
+
+/**
+ * `allowedClients`: addresses besides this computer that may call, as an array or a comma-separated
+ * string (TELLUS_EXAMPLE_API_CLIENTS). This computer itself, through loopback, is always allowed.
+ */
+function createConversationApiMiddleware({
+  apiKey, httpBaseUrl, allowedClients = [], onRefusedClient = warnRefusedClient, timeoutMs = 15_000,
+}) {
   const key = (apiKey || '').trim();
   const base = String(httpBaseUrl).replace(/\/+$/, '');
+  const clients = new Set((Array.isArray(allowedClients) ? allowedClients : String(allowedClients).split(','))
+    .map(normalizeAddress).filter(Boolean));
+  const warned = new Set();
 
   return (request, response, next) => {
     const url = request.url || '';
@@ -30,6 +56,17 @@ function createConversationApiMiddleware({ apiKey, httpBaseUrl, timeoutMs = 15_0
     function reply(status, message) {
       response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       response.end(JSON.stringify({ message: [message] }));
+    }
+    // Anyone who reaches this server could otherwise spend the key, and a development server can be
+    // reachable from the whole network. A simulator, an emulator, and `adb reverse` come in through
+    // loopback. The check comes first, so a refused caller does not learn which routes exist.
+    const client = clientAddress(request);
+    if (!isLoopback(client) && !clients.has(client)) {
+      if (!warned.has(client)) {
+        warned.add(client);
+        onRefusedClient(client);
+      }
+      return reply(403, `Only this computer and the addresses in TELLUS_EXAMPLE_API_CLIENTS may call this server (${client}).`);
     }
     // A query string is part of `path`, so a request with one matches no route.
     const path = url.slice(PREFIX.length);

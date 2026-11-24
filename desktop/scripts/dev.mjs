@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
+import { electronEnvironment, readDotenv } from './runtime-settings.mjs';
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const electronPath = createRequire(import.meta.url)('electron');
@@ -15,16 +16,10 @@ if (!devServerUrl) {
 }
 console.log(`Renderer dev server: ${devServerUrl} (opened inside Electron)`);
 
-const env = { ...process.env, TELLUS_DESKTOP_DEV_SERVER_URL: devServerUrl };
-// VS Code terminals set this, which would make Electron start as plain Node.js.
-delete env.ELECTRON_RUN_AS_NODE;
-// Download credentials are needed only by setup.
-delete env.NODE_OPTIONS;
-delete env.TELLUS_AUDIO_ENGINE_TOKEN;
-delete env.TELLUS_AUDIO_DOWNLOAD_BASE_URL;
-// The API key stays in this process, with the Vite server above (vite.config.mts). The app gets
-// an access token from that server for each Conversation.
-delete env.API_KEY;
+// Electron gets the runtime settings of `.env` and nothing else from it: the API key stays in this
+// process, with the Vite server above (vite.config.mts), and the app gets an access token from that
+// server for each Conversation. The installation credentials are needed only by setup.
+const env = electronEnvironment(process.env, readDotenv(new URL('../.env', import.meta.url)), devServerUrl);
 
 const electron = spawn(electronPath, ['.'], { cwd: projectRoot, env, stdio: 'inherit' });
 electron.on('exit', async (code) => {

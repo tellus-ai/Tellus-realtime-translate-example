@@ -16,6 +16,9 @@ config.server.enhanceMiddleware = (middleware, server) => {
     apiKey: process.env.API_KEY ?? '',
     httpBaseUrl: process.env.REALTIME_SPEECH_HTTP_URL?.trim()
       || process.env.EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL?.trim() || DEFAULT_HTTP_URL,
+    // Metro listens on the local network for devices. Only this computer (a simulator, an emulator,
+    // a device behind `adb reverse`) may spend the key, unless a device's address is listed here.
+    allowedClients: process.env.TELLUS_EXAMPLE_API_CLIENTS ?? '',
   });
   const downloads = createRecordingDownloadMiddleware();
   return (request, response, next) => conversationApi(request, response,

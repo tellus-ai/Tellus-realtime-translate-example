@@ -7,5 +7,9 @@ export function createConversationApiMiddleware(options: {
   apiKey: string;
   /** The Tellus HTTP base URL that the calls are forwarded to. */
   httpBaseUrl: string;
+  /** Callers besides this computer, as addresses or TELLUS_EXAMPLE_API_CLIENTS (comma-separated). */
+  allowedClients?: string | string[];
+  /** Called once for each refused address. Logs a warning by default. */
+  onRefusedClient?: (address: string) => void;
   timeoutMs?: number;
 }): (request: IncomingMessage, response: ServerResponse, next: () => void) => void;

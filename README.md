@@ -98,9 +98,11 @@ the place of your backend. None of them holds the API key:
 | Desktop | The Vite development server that `npm run dev` starts | The Electron main process calls the development server, which adds the API key | Access token in the `Authorization` header |
 
 The development server forwards exactly four calls (create, settings, access
-token, end) and nothing else the key could do. It does not know who is calling
-it, so anyone who can reach it can start Conversations on your key, although
-they cannot read the key. A real backend checks its own login first. A build
+token, end) and nothing else the key could do, and only from this computer
+(loopback). A simulator, an emulator, and an Android device behind
+`adb reverse` come in through loopback; list other devices, such as a phone on
+Wi-Fi, in `TELLUS_EXAMPLE_API_CLIENTS`. Beyond that address check the server
+does not know who is calling it. A real backend checks its own login first. A build
 that does not run against the development server (the static web `dist/`, a
 packaged desktop app, a mobile build without Metro) cannot start a session until
 it is pointed at a backend that provides the same four routes; see each

@@ -69,12 +69,13 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function startApp(): void {
-  // A packaged app reads only the runtime keys copied at build time (scripts/write-runtime-env.mjs).
-  // Values already set in the process environment take precedence. Neither contains the API key:
-  // the example API server holds it (scripts/conversation-api-middleware.cjs under `npm run dev`,
-  // or your own server in TELLUS_EXAMPLE_API_URL), and this process reads no key from `.env`.
-  const envFile = app.isPackaged ? join(__dirname, '../runtime.env') : join(app.getAppPath(), '.env');
-  const config = resolveRealtimeSpeechConfig({ ...readEnvFile(envFile), ...process.env });
+  // This process never opens `.env`, which also holds the API key. Under `npm run dev`, scripts/dev.mjs
+  // passes the runtime settings in the environment. `npm start` and a packaged app read the copy
+  // that `npm run build` wrote (scripts/write-runtime-env.mjs); a value set in the environment
+  // wins. Neither has the API key: the example API server holds it
+  // (scripts/conversation-api-middleware.cjs under `npm run dev`, or your server in TELLUS_EXAMPLE_API_URL).
+  const runtimeSettings = devServerUrl ? {} : readEnvFile(join(__dirname, '../runtime.env'));
+  const config = resolveRealtimeSpeechConfig({ ...runtimeSettings, ...process.env });
   const apiBaseUrl = resolveExampleApiUrl(config.exampleApiUrl, devServerUrl);
   const api = createRealtimeApi({ apiBaseUrl }, (url, init) => net.fetch(url, init));
   // REST and both WebSockets run here without an Origin header, like other native clients.

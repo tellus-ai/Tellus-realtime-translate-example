@@ -86,11 +86,15 @@ POST /__tellus/api/v1/conversations/{id}/end -----------------------------------
   approval (`audio.authenticate`, `engine.renew`) that the audio SDK sends on `/v1/audio`. An open WebSocket
   is not closed when its token expires.
 
+The middleware accepts calls from this computer only (loopback). With `vite --host` or `vite preview --host`,
+other machines can open the page but get `403` from these routes until their IP addresses are listed,
+comma-separated, in `TELLUS_EXAMPLE_API_CLIENTS` in `.env`. The development server logs each refused address
+once. The check comes before anything else, so a refused caller does not learn which routes exist.
+
 **This middleware is the part to replace with your own backend.** It runs only in `npm run dev` and
 `npm run preview`; the static files in `dist/` contain no key and cannot start a session without a server that
-provides the same four routes. The middleware also does not know who its caller is: anyone who can reach the
-development server can start a Conversation on your key. A real backend checks its own login session first,
-and then makes these calls for that user.
+provides the same four routes. The address check is a development safeguard: the middleware does not know who
+its caller is. A real backend checks its own login session first, and then makes these calls for that user.
 
 관련 공식 문서: [AudioWorklet 입력 프레임](https://developer.mozilla.org/en-US/docs/Web/API/AudioWorkletProcessor/process), [ORT WASM 환경 설정](https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html), [Emscripten Asyncify](https://emscripten.org/docs/porting/asyncify.html).
 

@@ -13,6 +13,8 @@ export default defineConfig(({ mode }) => {
   const conversationApi = () => createConversationApiMiddleware({
     apiKey,
     httpBaseUrl: env.VITE_REALTIME_SPEECH_HTTP_URL || DEFAULT_HTTP_URL,
+    // Only this computer may call, unless listed here (for `vite --host`).
+    allowedClients: env.TELLUS_EXAMPLE_API_CLIENTS ?? '',
   });
   return {
     define: {
