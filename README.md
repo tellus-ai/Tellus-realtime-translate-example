@@ -42,7 +42,7 @@ setup은 공개 SDK 저장소의 `v0.3.13`을 각 예제 내부의 `.sdk/`에 �
 
 설치 회귀 검증은 저장소 루트에서 `node --test tests/setup-sdk.test.mjs`로 실행합니다. 앱 검증은 Web·Mobile의 `npm run verify:pre-commit`, Desktop의 `npm run typecheck && npm test && npm run build`를 각각 사용합니다.
 
-CI는 두 가지입니다. `.github/workflows/examples.yml`은 secret 없이 모든 PR과 `main`·`v2` push에서 실행합니다. 설치 회귀 테스트와, 세 예제 각각의 고정 SDK 준비·타입 검사·단위 테스트·빌드를 돌리고, 표지용 키로 빌드해 API 키가 앱(웹 bundle, Expo 설정, 데스크톱 `dist/`)에 들어가지 않는지 확인합니다. 엔진 설치는 설치 토큰이 필요하므로 이 CI에서는 SDK의 JavaScript 패키지만 사용합니다. `.github/workflows/audio-engine-mobile.yml`은 테스트용 엔진을 소스에서 빌드해 iOS 시뮬레이터와 Android 에뮬레이터에서 실제 SDK를 검사합니다. 예제가 고정한 SDK와 그 SDK가 짝지은 엔진 버전으로 빌드하며(수동 실행 때 `sdk_ref`·`engine_ref`로 바꿀 수 있습니다), 비공개 엔진 저장소를 읽을 수 있는 `TELLUS_CI_REPOSITORY_TOKEN` secret이 필요합니다.
+CI는 `.github/workflows/examples.yml` 하나입니다. secret 없이 모든 PR과 `main`·`v2` push에서 실행합니다. 설치 회귀 테스트와, 세 예제 각각의 고정 SDK 준비·타입 검사·단위 테스트·빌드를 돌리고, 표지용 키로 빌드해 API 키가 앱(웹 bundle, Expo 설정, 데스크톱 `dist/`)에 들어가지 않는지 확인합니다. 엔진 설치는 설치 토큰이 필요하므로 CI는 SDK의 JavaScript 패키지만 사용합니다. 실제 엔진을 쓰는 검증(시뮬레이터·에뮬레이터 probe, 데스크톱 엔진 smoke)은 각 예제 README의 명령으로 로컬에서 실행합니다.
 
 ## API contract
 

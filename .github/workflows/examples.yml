@@ -1,8 +1,9 @@
 name: Example checks
 
 # Runs on every pull request and needs no secrets: the pinned public SDK, the unit tests, the type
-# checks, the builds, and the guarantee that the API key stays out of what each app ships. The
-# native engine on simulators and emulators is checked by audio-engine-mobile.yml.
+# checks, the builds, and the guarantee that the API key stays out of what each app ships. The native
+# engine is not installed here (that needs an installation token); check it locally with the
+# commands in each example's README.
 on:
   pull_request:
   push:

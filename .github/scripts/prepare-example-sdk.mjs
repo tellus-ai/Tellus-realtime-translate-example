@@ -1,6 +1,6 @@
 // Prepares the pinned public SDK source of one example in <app>/.sdk, the way `npm run setup` does,
 // without the engine download that needs an installation token. Type checks, unit tests and builds
-// need only the SDK's JavaScript packages; the native engine is checked by the native pipeline.
+// need only the SDK's JavaScript packages.
 //
 //   node .github/scripts/prepare-example-sdk.mjs web
 import { execFileSync } from 'node:child_process';
