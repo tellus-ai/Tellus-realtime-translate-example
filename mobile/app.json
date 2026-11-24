@@ -9,7 +9,8 @@
     "plugins": [
       "expo-router",
       "@tellus-ai/audio-sdk-mobile",
-      "./plugins/withUIScene"
+      "./plugins/withUIScene",
+      "./plugins/withXcode27Pods"
     ],
     "ios": {
       "supportsTablet": true,

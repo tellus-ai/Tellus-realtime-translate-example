@@ -4,6 +4,7 @@ require File.join(File.dirname(`node --print "require.resolve('expo/package.json
 require File.join(File.dirname(`node --print "require.resolve('react-native/package.json')"`), "scripts/react_native_pods")
 
 require 'json'
+require_relative '../plugins/xcode27-pods'
 podfile_properties = JSON.parse(File.read(File.join(__dir__, 'Podfile.properties.json'))) rescue {}
 
 def ccache_enabled?(podfile_properties)
@@ -61,5 +62,7 @@ target 'TellusRealtimeTranslationExample' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
+    # Xcode 27 and later only (plugins/xcode27-pods.rb).
+    tellus_adjust_pods_for_xcode(installer)
   end
 end

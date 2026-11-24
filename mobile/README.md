@@ -70,7 +70,12 @@ npm run verify:pre-commit
 
 iOS 27은 iOS 27 SDK로 빌드한 앱이 UIScene 생명주기를 쓰지 않으면 실행 직후 종료한다(`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`). Expo SDK 55 template은 아직 `AppDelegate`에서 React Native를 시작하므로, `plugins/withUIScene.js`가 `expo prebuild` 때마다 `Info.plist`에 scene 설정을 추가하고 `AppDelegate.swift`에 `SceneDelegate`를 넣는다. `SceneDelegate`는 scene의 window에서 React Native를 시작하고, 앱을 연 링크를 `Linking.getInitialURL()`이 읽는 launch options로 옮기며, 실행 중 링크와 앱 생명주기 콜백을 `AppDelegate`로 넘긴다(Expo module이 그곳에서 받는다). git에 있는 iOS host도 같은 상태이며 `tests/withUIScene.test.ts`가 둘이 같은지 검사한다. Expo template이 바뀌어 plugin이 바꿀 위치를 찾지 못하면 prebuild가 오류로 멈춘다.
 
-Xcode 27.2에서는 Pods의 배포 대상 때문에 빌드가 실패한다(SDWebImage resource bundle의 9.0, expo-router의 iOS 16 API). 최소 iOS를 올리기 전까지는 `IPHONEOS_DEPLOYMENT_TARGET=16.0`을 `xcodebuild` 인자로 넘겨 빌드한다.
+Xcode 27 이상으로 빌드할 때만 Pod 두 개의 빌드 설정을 바꾼다. `plugins/xcode27-pods.rb`가 `pod install` 때 `xcodebuild -version`으로 Xcode 주 버전을 확인하고, 27 미만이면 아무것도 바꾸지 않는다. `plugins/withXcode27Pods.js`가 prebuild 때마다 Podfile의 `post_install`에 이 호출을 넣으며, git에 있는 Podfile도 같은 상태다. 앱과 앱이 가져오는 Pod의 최소 iOS는 15.1 그대로다.
+
+- Xcode 27은 iOS 15.0 미만을 빌드하지 않는다. 배포 대상이 그보다 낮은 Pod 타깃(SDWebImage resource bundle의 9.0)을 앱의 최소 iOS로 올린다.
+- expo-router의 링크 미리보기 메뉴(`LinkPreviewNativeActionView.swift`)는 가용성 검사 없이 `UIAction.subtitle`을 쓴다. UIKit은 이 속성을 iOS 15.0부터 제공한다고 선언하지만(`UIMenuElement.h`), Xcode 27의 Swift 컴파일러는 iOS 16.0 이상이라며 빌드를 멈춘다. `ExpoRouter`를 iOS 16.0으로 빌드하면 iOS 15.1로 빌드하는 앱이 이 모듈을 가져올 수 없다(Swift는 최소 버전이 더 높은 모듈의 import를 거절한다). 그래서 `ExpoRouter`는 최소 iOS를 그대로 두고 이 Pod만 Swift 가용성 검사 없이 컴파일한다(`OTHER_SWIFT_FLAGS`에 `-Xfrontend -disable-availability-checking`). 앱의 최소 iOS 15.1에서는 이 속성이 있으므로 실행에는 문제가 없다.
+
+`pod install`이 적용 결과를 `[Xcode 27] Pod settings: ...`로 출력한다. Xcode를 바꾼 뒤에는 `pod install`을 다시 실행한다.
 
 Android host는 `app.json`과 SDK plugin으로 생성하는 로컬 산출물이므로 git에 저장하지 않는다. `npx expo prebuild --platform android --no-install`로 재생성할 수 있다. 기존 tracked iOS host는 유지하며 `prebuild --clean`으로 덮어쓰지 않는다. 새 CNG 앱에서는 [Expo 공식 흐름](https://docs.expo.dev/workflow/continuous-native-generation/)을 따라 두 플랫폼 모두 자동 생성할 수 있다.
 
