@@ -48,6 +48,9 @@ export class NativeMicrophone implements MicrophoneRecorder {
         micEnabled: true, processing: { sampleRate: 16000, chunkDurationMs: 20 },
         transport: { codec: 'opus', bitrateBps: 64000 },
         denoiseEnabled: this.denoise, vadEnabled: false,
+        // The SDK default, 'close_talk', also gates out sound that is not close to the microphone.
+        // An interpreted conversation has a second speaker farther away, so keep plain denoise.
+        denoiseMode: 'general',
         echoCancellationEnabled: true, micAgc2Enabled: false,
       });
       if (generation !== this.generation) return;

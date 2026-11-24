@@ -1,6 +1,6 @@
 # Web Realtime Translation Example
 
-Vite/React 예제입니다. `@tellus-ai/audio-sdk-web` 0.2.5의 Rust WASM 엔진으로 마이크 오디오를 처리하고 Tellus Realtime Speech 서버로 전송합니다.
+Vite/React 예제입니다. `@tellus-ai/audio-sdk-web` 0.3.13의 Rust WASM 엔진으로 마이크 오디오를 처리하고 Tellus Realtime Speech 서버로 전송합니다.
 
 See the root [`README.md`](../README.md#api-contract) for the `/v1` REST and WebSocket contracts used by
 this example.
@@ -19,11 +19,11 @@ You can also use the development script.
 ./dev.sh
 ```
 
-`npm run setup` 전에 `.env`의 `TELLUS_AUDIO_ENGINE_TOKEN`에 Tellus에서 발급한 설치 토큰을 설정합니다. 설치 토큰은 실행 시 사용하는 `API_KEY`(Tellus API 콘솔에서 발급한 API 키)와 별개입니다. setup은 토큰을 먼저 검사하고 공개 SDK 0.2.5의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `npm ci`, SDK 설치기, `prepare:engine`을 순서대로 실행합니다. Node.js 24와 Git이 필요하며 별도 SDK 폴더를 준비할 필요가 없습니다. npm lifecycle 스크립트를 비활성화한 경우에도 SDK 설치기를 직접 실행하여 엔진과 모델 설치를 확인합니다. 다운로드 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정합니다. 설치 토큰에 `VITE_` 접두사를 붙이지 않습니다.
+`npm run setup` 전에 `.env`의 `TELLUS_AUDIO_ENGINE_TOKEN`에 Tellus에서 발급한 설치 토큰을 설정합니다. 설치 토큰은 실행 시 사용하는 `API_KEY`(Tellus API 콘솔에서 발급한 API 키)와 별개입니다. setup은 토큰을 먼저 검사하고 공개 SDK 0.3.13의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `npm ci`, SDK 설치기, `prepare:engine`을 순서대로 실행합니다. Node.js 24와 Git이 필요하며 별도 SDK 폴더를 준비할 필요가 없습니다. npm lifecycle 스크립트를 비활성화한 경우에도 SDK 설치기를 직접 실행하여 엔진과 모델 설치를 확인합니다. 다운로드 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정합니다. 설치 토큰에 `VITE_` 접두사를 붙이지 않습니다.
 
 SDK의 `vendor/web`에 엔진 `.mjs`·`.wasm`과 암호화 모델이 준비되어 있어야 합니다. `prepare:engine`은 SDK의 자산 복사 도구로 `public/tellus-audio/`를 생성하며 `dev`와 `build` 전에 자동 실행됩니다. 엔진 또는 SDK를 변경했으면 먼저 SDK를 다시 빌드합니다. 배포 서버의 모델 키 등록은 복사한 모델 manifest의 `keyId`와 일치해야 합니다.
 
-`.npmrc`의 `install-links=true`로 `.sdk/platforms/web` 패키지를 앱의 `node_modules`에 복사 설치합니다. SDK가 사용하는 엔진은 **0.3.4**입니다. 다운로드 서버는 `wasm32-emscripten` archive와 `.sha256` 파일을 모두 허용하고 게시해야 합니다. `.sdk/`는 setup이 관리하는 로컬 빌드 캐시이며 다른 SDK 버전이 들어 있으면 삭제 후 `npm run setup`을 다시 실행합니다.
+`.npmrc`의 `install-links=true`로 `.sdk/platforms/web` 패키지를 앱의 `node_modules`에 복사 설치합니다. SDK가 사용하는 엔진은 **0.4.13**입니다. 다운로드 서버는 `wasm32-emscripten` archive와 `.sha256` 파일을 모두 허용하고 게시해야 합니다. `.sdk/`는 setup이 관리하는 로컬 빌드 캐시이며 다른 SDK 버전이 들어 있으면 삭제 후 `npm run setup`을 다시 실행합니다.
 
 Set the API key issued in the Tellus API Console in `API_KEY` in `.env`, select two different languages, and start the session.
 The key cannot be entered or changed in the browser UI. Restart the development server after changing
@@ -44,11 +44,11 @@ unlocks the VAD toggle.
 - WebSocket 기본값: `wss://public.speech.tellus.ai.kr`
 - 전송: Rust Opus, 16 kHz, mono, 20 ms
 - `VITE_TELLUS_AUDIO_ASSET_BASE`: 엔진·ORT·암호화 모델 자산의 기준 URL. 기본값은 문서 URL 기준 `tellus-audio/`입니다.
-- `VITE_TELLUS_DENOISE=true`: FastEnhancer를 활성화합니다. 기본값은 `false`입니다.
+- `VITE_TELLUS_DENOISE=true`: DeepFilterNet3 denoise를 활성화합니다. 기본값은 `false`입니다. 예제는 `denoiseMode: 'general'`을 지정합니다. SDK 기본값 `close_talk`는 마이크에서 먼 소리를 무음으로 만들어, 떨어져 있는 상대 화자의 말이 빠질 수 있습니다.
 
 Start 버튼에서 AudioContext를 준비한 뒤 `/v1/audio`의 엔진 permit을 검증하고 HPKE 모델 키를 적용합니다. 암호화 모델 복호화와 모델 로드는 Rust 엔진에서 수행하며 승인 완료 뒤 마이크를 시작합니다. API 키나 모델 콘텐츠 키를 SDK 자산에 포함하지 않습니다.
 
-AudioWorklet은 브라우저가 제공한 입력 프레임을 Worker로 전달합니다. Rust가 LPF·resample·AEC·FastEnhancer·DSP·limiter·Silero·Opus를 처리합니다. 브라우저 마이크의 echo cancellation, noise suppression, auto gain control은 비활성화합니다. ORT Web `1.24.1`은 Worker에서 single-thread WASM으로 실행합니다. `SharedArrayBuffer`와 교차 출처 격리 헤더는 필요하지 않습니다.
+AudioWorklet은 브라우저가 제공한 입력 프레임을 Worker로 전달합니다. Rust가 LPF·resample·AEC·DeepFilterNet3·DSP·limiter·Silero·Opus를 처리합니다. 브라우저 마이크의 echo cancellation, noise suppression, auto gain control은 비활성화합니다. ORT Web `1.24.1`은 Worker에서 single-thread WASM으로 실행합니다. `SharedArrayBuffer`와 교차 출처 격리 헤더는 필요하지 않습니다.
 
 Silero 기본 positive/negative threshold는 `0.5` / `0.35`, silence는 `550 ms`, pre-speech는 `500 ms`입니다. SDK가 반환한 gate 전이만 UI와 `audio.status`에 반영하며 해당 오디오보다 먼저 전송합니다. gate가 닫혀도 오디오 전송을 유지합니다. SDK 출력의 `validSampleCount`는 마지막 패딩 프레임의 실제 샘플 수를 나타냅니다.
 
@@ -76,7 +76,7 @@ only the access token; the API key then never reaches the browser.
 
 관련 공식 문서: [AudioWorklet 입력 프레임](https://developer.mozilla.org/en-US/docs/Web/API/AudioWorkletProcessor/process), [ORT WASM 환경 설정](https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html), [Emscripten Asyncify](https://emscripten.org/docs/porting/asyncify.html).
 
-**Noise Reduction (Denoise)** 스위치로 Start 전과 녹음·일시정지 중에 SDK FastEnhancer를 켜고 끌 수 있습니다. 기본값은 꺼짐이며 `VITE_TELLUS_DENOISE=true`로 초기값을 켤 수 있습니다. `setDenoiseEnabled()` 적용 후 `getStatus()`로 확인한 값을 **Audio SDK denoise**에 표시합니다. 시작 전에는 선택값을 별도로 표시하며, Stop 후 다음 세션에도 선택값을 유지합니다. 적용 실패는 번역을 종료하지 않고 오류로 표시합니다.
+**Noise Reduction (Denoise)** 스위치로 Start 전과 녹음·일시정지 중에 SDK denoise(DeepFilterNet3)를 켜고 끌 수 있습니다. 기본값은 꺼짐이며 `VITE_TELLUS_DENOISE=true`로 초기값을 켤 수 있습니다. `setDenoiseEnabled()` 적용 후 `getStatus()`로 확인한 값을 **Audio SDK denoise**에 표시합니다. 시작 전에는 선택값을 별도로 표시하며, Stop 후 다음 세션에도 선택값을 유지합니다. 적용 실패는 번역을 종료하지 않고 오류로 표시합니다.
 
 ## Error Handling and Reconnects
 

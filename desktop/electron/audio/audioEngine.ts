@@ -6,6 +6,9 @@ const AUDIO_CAPTURE_CONFIG: AudioCaptureConfig = {
   speakerEnabled: false,
   // Same default as the Tellus desktop app. The engine DSP chain still runs.
   denoiseEnabled: false,
+  // The SDK default, 'close_talk', also gates out sound that is not close to the microphone.
+  // An interpreted conversation has a second speaker farther away, so keep plain denoise.
+  denoiseMode: 'general',
   vadEnabled: false,
   processing: { sampleRate: 16_000, chunkDurationMs: 20 },
   transport: { codec: 'opus', bitrateBps: 64_000 },

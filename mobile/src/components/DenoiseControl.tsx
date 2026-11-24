@@ -13,7 +13,7 @@ export function DenoiseToggle({ snapshot, disabled, audioSdkEnabled, onChange }:
       <View style={styles.copy}>
         <Text style={styles.label}>Noise Reduction (Denoise)</Text>
         <Text style={styles.description}>{snapshot.updating ? 'Applying…'
-          : audioSdkEnabled ? 'FastEnhancer · change while recording' : 'Audio SDK unavailable'}</Text>
+          : audioSdkEnabled ? 'DeepFilterNet3 · change while recording' : 'Audio SDK unavailable'}</Text>
       </View>
       <Switch accessibilityLabel="Audio SDK denoise" disabled={locked} value={snapshot.enabled && audioSdkEnabled}
         onValueChange={(value) => { if (!locked) onChange(value); }} />

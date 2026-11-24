@@ -68,7 +68,7 @@ describe('required mobile Audio SDK', () => {
     const microphone = new NativeMicrophone();
     expect(microphone.audioSdkReady).toBe(false);
     await microphone.prepare(true);
-    expect(init).toHaveBeenCalledWith(expect.objectContaining({ vadEnabled: false }));
+    expect(init).toHaveBeenCalledWith(expect.objectContaining({ vadEnabled: false, denoiseMode: 'general' }));
     expect(microphone.audioSdkReady).toBe(true);
     await microphone.stop();
     expect(microphone.audioSdkReady).toBe(false);

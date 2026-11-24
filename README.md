@@ -20,7 +20,7 @@ example asks the server for an access token and opens the WebSockets with that; 
 
 ## 플랫폼별 SDK 설치
 
-각 예제는 `npm run setup`으로 필요한 플랫폼 SDK **0.2.5**와 엔진 **0.3.4**를 설치합니다. Node.js 24와 Git이 필요합니다. 별도 SDK 저장소나 엔진 소스를 직접 준비할 필요가 없습니다.
+각 예제는 `npm run setup`으로 필요한 플랫폼 SDK **0.3.13**과 엔진 **0.4.13**을 설치합니다. Node.js 24와 Git이 필요합니다. 별도 SDK 저장소나 엔진 소스를 직접 준비할 필요가 없습니다.
 
 | 예제 | 설치 패키지 |
 | --- | --- |
@@ -36,7 +36,7 @@ cp .env.example .env
 npm run setup
 ```
 
-setup은 공개 SDK 저장소의 `v0.2.5`를 각 예제 내부의 `.sdk/`에 내려받고 `scripts/audio-sdk-release.json`의 고정 커밋을 검증한 뒤 JavaScript 패키지를 빌드합니다. `.npmrc`의 `install-links=true`로 해당 플랫폼 패키지를 `node_modules`에 복사하고, 설치 토큰과 같은 환경의 다운로드 서버에서 엔진·checksum·암호화 모델을 준비합니다. Web은 브라우저 자산도 복사합니다. Rust 빌드나 GitHub 인증은 필요하지 않습니다.
+setup은 공개 SDK 저장소의 `v0.3.13`을 각 예제 내부의 `.sdk/`에 내려받고 `scripts/audio-sdk-release.json`의 고정 커밋을 검증한 뒤 JavaScript 패키지를 빌드합니다. `.npmrc`의 `install-links=true`로 해당 플랫폼 패키지를 `node_modules`에 복사하고, 설치 토큰과 같은 환경의 다운로드 서버에서 엔진·checksum·암호화 모델을 준비합니다. Web은 브라우저 자산도 복사합니다. Rust 빌드나 GitHub 인증은 필요하지 않습니다.
 
 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`은 설치 토큰의 환경과 같아야 합니다. 다운로드 서버에 대상 엔진과 checksum이 게시되고 해당 플랫폼이 허용되어 있어야 setup이 완료됩니다. Web은 `wasm32-emscripten` archive와 checksum을 사용합니다. `.sdk/`는 Git에서 제외하며, 버전을 변경할 때는 세 예제의 SDK 고정 커밋과 lockfile을 함께 갱신합니다.
 

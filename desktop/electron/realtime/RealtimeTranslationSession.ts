@@ -80,7 +80,7 @@ export interface CapturedAudioChunk {
   data: { microphone?: Uint8Array };
   sampleCount: number;
   sampleRate?: number;
-  validSampleCount?: number;
+  validSampleCount?: number | null;
   sample?: number;
   sequence?: number;
   gateEvent?: string;

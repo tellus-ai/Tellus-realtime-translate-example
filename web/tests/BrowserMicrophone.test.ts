@@ -26,6 +26,12 @@ describe('browser SDK denoise', () => {
     expect(microphone.denoiseEnabled).toBe(true);
   });
 
+  it('asks for plain denoise, not the close-talk gate that silences a speaker farther from the microphone', async () => {
+    const microphone = new BrowserMicrophone();
+    await microphone.prepare(false);
+    expect(sdk.init).toHaveBeenCalledWith(expect.objectContaining({ denoiseMode: 'general' }), expect.anything());
+  });
+
   it('changes the existing SDK capture and reads its applied state without restarting it', async () => {
     const microphone = new BrowserMicrophone();
     await microphone.prepare(false);
@@ -54,7 +60,7 @@ describe('required browser Audio SDK', () => {
     await microphone.prepare(true);
     expect(sdk.init).toHaveBeenCalledWith(
       expect.objectContaining({ vadEnabled: false }),
-      expect.objectContaining({ encryptedModels: ['https://example.test/tellus-audio/models/fe-s16.temc'] }),
+      expect.objectContaining({ encryptedModels: ['https://example.test/tellus-audio/models/denoise.temc'] }),
     );
     expect(microphone.audioSdkReady).toBe(true);
     await microphone.stop();

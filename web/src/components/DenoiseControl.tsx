@@ -14,7 +14,7 @@ export function DenoiseToggle({ snapshot, disabled, audioSdkEnabled, onChange }:
       <span className="denoise-toggle-row">
         <input type="checkbox" aria-label="Audio SDK denoise" checked={snapshot.enabled && audioSdkEnabled}
           disabled={locked} onChange={(event) => { if (!locked) onChange(event.target.checked); }} />
-        {snapshot.updating ? 'Applying…' : audioSdkEnabled ? 'FastEnhancer · change while recording' : 'Audio SDK unavailable'}
+        {snapshot.updating ? 'Applying…' : audioSdkEnabled ? 'DeepFilterNet3 · change while recording' : 'Audio SDK unavailable'}
       </span>
     </label>
   );

@@ -1,6 +1,6 @@
 # 모바일 실시간 번역 예제
 
-Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile` 0.2.5가 OS 캡처, Rust DSP·FastEnhancer·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/v1/audio`로 전달한다. 서버 호출은 모두 `/v1` 경로를 사용한다.
+Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile` 0.3.13이 OS 캡처, Rust DSP·DeepFilterNet3 denoise·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/v1/audio`로 전달한다. 서버 호출은 모두 `/v1` 경로를 사용한다.
 
 ```sh
 cp .env.example .env
@@ -10,11 +10,11 @@ npm run ios
 # 또는 npm run android
 ```
 
-`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인하고 공개 SDK 0.2.5의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 런타임 로그인용이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정하며, 없으면 `REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, staging 기본 주소 순서로 선택한다.
+`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인하고 공개 SDK 0.3.13의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 런타임 로그인용이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정하며, 없으면 `REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, staging 기본 주소 순서로 선택한다.
 
 `./dev.sh [start|ios|android]`도 SDK 또는 엔진 파일이 없으면 같은 setup을 실행한다. setup 이후 `npm run ios` 또는 `npm run android`로 SDK가 포함된 개발 앱을 빌드한다.
 
-Node.js 24와 Git이 필요하며 별도 SDK 폴더를 준비할 필요가 없다. `.sdk/platforms/mobile`의 SDK 0.2.5와 엔진 0.3.4를 사용한다. `.npmrc`의 `install-links=true`로 앱의 `node_modules`에 복사 설치한다. SDK installer가 플랫폼 binary와 `fe-s16.temc`, `fe-s48.temc`, `silero-vad.temc` 암호화 모델을 준비해야 한다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 오디오 캡처 구현은 SDK에 위임하며 고객 앱에서는 React Native TypeScript API를 사용한다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
+Node.js 24와 Git이 필요하며 별도 SDK 폴더를 준비할 필요가 없다. `.sdk/platforms/mobile`의 SDK 0.3.13과 엔진 0.4.13을 사용한다. `.npmrc`의 `install-links=true`로 앱의 `node_modules`에 복사 설치한다. SDK installer가 플랫폼 binary와 `denoise.temc`, `vad.temc` 암호화 모델, 엔진 archive에 함께 들어 있는 ONNX Runtime(iOS `onnxruntime.xcframework`, Android `libonnxruntime.so`)을 준비해야 한다. ONNX Runtime을 CocoaPods나 Maven에서 따로 받지 않는다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 오디오 캡처 구현은 SDK에 위임하며 고객 앱에서는 React Native TypeScript API를 사용한다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
 
 `.sdk/`는 setup이 관리하는 로컬 빌드 캐시다. 다른 SDK 버전이 들어 있으면 삭제 후 `npm run setup`을 다시 실행한다. SDK를 갱신한 뒤 기존 iOS host를 사용하는 경우 Pods를 갱신하고 앱을 다시 빌드한다.
 
@@ -27,7 +27,7 @@ npm run ios
 `.env`의 `API_KEY`에 Tellus API 콘솔에서 발급한 API 키를 설정하고 서로 다른 두 언어를 선택한다. `POST /v1/conversations`로 Conversation을 만들고 `POST /v1/conversations/{id}/settings`로 두 언어를 저장한 뒤, 결과 socket(`/v1/conversations/{id}/results`)과 `/v1/audio` socket을 연다. 두 socket은 handshake의 `Authorization: Bearer <API 키>` 헤더와 `Origin` 헤더로 인증한다. React Native는 WebSocket 헤더를 설정할 수 있으므로 연결 입장권(`POST /v1/access-tokens`)을 사용하지 않으며, API 키를 URL에 넣지 않는다(서버가 거절한다). 결과 socket은 ready 메시지 없이 열리는 즉시 사용하고, 재연결할 때는 `after_order_seq`로 마지막으로 완료한 발화 번호를 전달해 끊긴 동안의 확정 결과를 다시 받는다. `/v1/audio` socket의 `attachEngineAuthorization.ready`가 permit과 모델 키를 적용한 뒤 마이크 권한을 요청하고 캡처를 시작한다. 엔진 승인과 갱신에도 같은 API 키를 전달한다. 새 socket마다 같은 capture를 재승인하며, 승인 폐기 시 OS 캡처와 대기 출력도 중단한다.
 
 - 처리·전송: Opus, 16kHz mono, 20ms
-- denoise: FastEnhancer 기본 활성화; `EXPO_PUBLIC_TELLUS_DENOISE=false`로 초기 비활성화 가능. **Noise Reduction (Denoise)** 스위치로 Start 전과 녹음·일시정지 중에 변경할 수 있다. SDK의 `setDenoiseEnabled()`로 적용한 뒤 `getStatus()`로 확인하며, **Audio SDK denoise**에 적용 상태를 표시한다. 선택값은 Stop 후 다음 세션에도 유지하고, 적용 실패는 번역을 종료하지 않고 표시한다.
+- denoise: DeepFilterNet3 기본 활성화, `denoiseMode: 'general'`(SDK 기본값 `close_talk`는 마이크에서 먼 소리를 무음으로 만들어 떨어져 있는 상대 화자의 말이 빠질 수 있다); `EXPO_PUBLIC_TELLUS_DENOISE=false`로 초기 비활성화 가능. **Noise Reduction (Denoise)** 스위치로 Start 전과 녹음·일시정지 중에 변경할 수 있다. SDK의 `setDenoiseEnabled()`로 적용한 뒤 `getStatus()`로 확인하며, **Audio SDK denoise**에 적용 상태를 표시한다. 선택값은 Stop 후 다음 세션에도 유지하고, 적용 실패는 번역을 종료하지 않고 표시한다.
 - Audio SDK: SDK 활성화 설정에 따라 UI에 `사용 중 / 사용하지 않음` 표시; SDK 초기화 실패·미사용 시 Conversation 생성 전에 오류 표시
 - VAD: audio-sdk 사용 시 클라이언트 VAD 비활성화 (`vadEnabled: false`, `client_vad: false`); SDK는 기본 활성화이므로 앱 실행 직후부터 정지·오류 후에도 토글을 OFF로 고정하고 클릭·변경 차단; `.env`의 `TELLUS_AUDIO_SDK_ENABLED=false`로 명시적으로 끈 경우에만 VAD 선택 가능 (SDK 미사용 세션 시작 오류 유지), gate 이벤트 전송 없음
 - background·interruption·route 변경: 자동 캡처 재개 없이 중단하며 새 승인이 필요한 연결은 재승인 후 재개

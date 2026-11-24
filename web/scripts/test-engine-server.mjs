@@ -84,7 +84,8 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
           return;
         }
         const keys = (message.model_keys ?? []).map((key) => {
-          if (!registry.some((model) => model.id === key.model_id && model.keyId === key.key_id)) throw new Error('Unknown fixture model');
+          // manifest의 id는 역할(denoise, vad)이고 키 요청의 model_id는 모델 이름(dfn3-48, silero-vad)이라 keyId로만 맞춘다.
+          if (!registry.some((model) => model.keyId === key.key_id)) throw new Error('Unknown fixture model');
           stats.keyRequests++;
           return { model_id: key.model_id, key_id: key.key_id, wrapped_key: wrapContentKey({
             recipientPublicKey: Buffer.from(key.public_key, 'hex'), contentKey,
