@@ -42,10 +42,10 @@ export interface RequestOptions {
 }
 
 /** Sends the request again after a 503, up to three more times. Other statuses are not retried. */
-export async function requestJson<T>(url: string, accessToken: string, init: RequestInit, { retryNetworkFailure = false }: RequestOptions = {}): Promise<T> {
+export async function requestJson<T>(url: string, apiKey: string, init: RequestInit, { retryNetworkFailure = false }: RequestOptions = {}): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await requestOnce<T>(url, accessToken, init);
+      return await requestOnce<T>(url, apiKey, init);
     } catch (error) {
       const status = error instanceof RealtimeApiError ? error.status : undefined;
       // No response includes a request that ran into REQUEST_TIMEOUT_MS.
@@ -56,7 +56,7 @@ export async function requestJson<T>(url: string, accessToken: string, init: Req
   }
 }
 
-async function requestOnce<T>(url: string, accessToken: string, init: RequestInit): Promise<T> {
+async function requestOnce<T>(url: string, apiKey: string, init: RequestInit): Promise<T> {
   // React Native has no `AbortSignal.timeout`.
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -68,7 +68,7 @@ async function requestOnce<T>(url: string, accessToken: string, init: RequestIni
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken.trim()}`,
+        Authorization: `Bearer ${apiKey.trim()}`,
         ...init.headers,
       },
     });

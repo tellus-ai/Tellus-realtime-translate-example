@@ -7,7 +7,7 @@ const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 export interface RealtimeSpeechConfig {
   audioSdkEnabled: boolean;
-  accessToken: string;
+  apiKey: string;
   httpBaseUrl: string;
   websocketBaseUrl: string;
 }
@@ -26,7 +26,7 @@ export function resolveRealtimeSpeechConfig(
 ): RealtimeSpeechConfig {
   return {
     audioSdkEnabled: env.TELLUS_AUDIO_SDK_ENABLED?.trim() !== 'false',
-    accessToken: env.API_KEY?.trim() ?? '',
+    apiKey: env.API_KEY?.trim() ?? '',
     httpBaseUrl: readBaseUrl('REALTIME_SPEECH_HTTP_URL', env.REALTIME_SPEECH_HTTP_URL, DEFAULT_HTTP_URL, 'https:', 'http:'),
     websocketBaseUrl: readBaseUrl('REALTIME_SPEECH_WS_URL', env.REALTIME_SPEECH_WS_URL, DEFAULT_WS_URL, 'wss:', 'ws:'),
   };
@@ -49,7 +49,8 @@ function readBaseUrl(
   if (url.username || url.password || url.search || url.hash) {
     throw new Error(`${name} must not contain credentials, a query, or a hash.`);
   }
-  // The access token is sent with every REST request, so plain-text transport is limited to local servers.
+  // The API key is sent with every REST request and WebSocket handshake, so plain-text transport
+  // is limited to local servers.
   const local = url.protocol === localProtocol && LOCAL_HOSTNAMES.has(url.hostname);
   if (url.protocol !== secureProtocol && !local) {
     throw new Error(`${name} must use ${secureProtocol} (${localProtocol} is allowed only for localhost).`);

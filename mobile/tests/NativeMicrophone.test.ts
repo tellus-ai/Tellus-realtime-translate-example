@@ -1,4 +1,5 @@
 import { AudioEngine } from '@tellus-ai/audio-sdk-mobile';
+import { attachEngineAuthorization } from '@tellus-ai/audio-sdk-mobile/authorization';
 import { NativeMicrophone } from '../src/audio/NativeMicrophone';
 
 jest.mock('@tellus-ai/audio-sdk-mobile', () => ({ AudioEngine: { init: jest.fn() } }));
@@ -42,6 +43,23 @@ describe('mobile SDK denoise', () => {
     capture.setDenoiseEnabled.mockRejectedValueOnce(new Error('model_not_ready'));
     await expect(microphone.setDenoiseEnabled(false)).rejects.toThrow('model_not_ready');
     expect(microphone.denoiseEnabled).toBe(true);
+  });
+});
+
+describe('mobile engine approval', () => {
+  it('gives the SDK the API key for the first approval and for every renewal', async () => {
+    const attach = jest.mocked(attachEngineAuthorization);
+    attach.mockReturnValue({ ready: Promise.resolve(), dispose: jest.fn() } as unknown as ReturnType<typeof attachEngineAuthorization>);
+    const microphone = new NativeMicrophone();
+    await microphone.prepare(false);
+    const socket = {} as WebSocket;
+    await microphone.authorize(socket, 'conversation-1', 'api-key', jest.fn());
+
+    const [attachedSocket, attachedCapture, options] = attach.mock.calls[0]!;
+    expect(attachedSocket).toBe(socket);
+    expect(attachedCapture).toBe(capture);
+    expect(options.conversationId).toBe('conversation-1');
+    expect([options.getAccessToken(), options.getAccessToken()]).toEqual(['api-key', 'api-key']);
   });
 });
 

@@ -17,20 +17,26 @@ interface ConversationResponse {
   conversation_id: string;
 }
 
+interface AccessTokenResponse {
+  access_token: string;
+  expires_at_ms: number;
+}
+
+export interface IssuedAccessToken {
+  token: string;
+  /** Epoch milliseconds. A token lasts 15 minutes. */
+  expiresAtMs: number;
+}
+
 export async function createConversation(
   endpoints: RealtimeEndpoints,
-  accessToken: string,
+  apiKey: string,
 ): Promise<string> {
+  // No body: the settings are saved by the next call.
   const response = await requestJson<ConversationResponse>(
-    `${endpoints.httpBaseUrl}/conversations`,
-    accessToken,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        max_concurrent_viewers: 10,
-        conversation_audio_mode: 'single_speaker',
-      }),
-    },
+    `${endpoints.httpBaseUrl}/v1/conversations`,
+    apiKey,
+    { method: 'POST' },
   );
   if (!response.conversation_id) {
     throw new Error('Conversation response is missing conversation_id.');
@@ -40,36 +46,60 @@ export async function createConversation(
 
 export async function saveInterpretationSettings(
   endpoints: RealtimeEndpoints,
-  accessToken: string,
+  apiKey: string,
   conversationId: string,
   sourceLanguage: string,
   targetLanguage: string,
   clientVad: boolean,
 ): Promise<void> {
   await requestJson(
-    `${endpoints.httpBaseUrl}/conversations/${encodeURIComponent(conversationId)}/interpretation-settings`,
-    accessToken,
+    `${endpoints.httpBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/settings`,
+    apiKey,
     {
       method: 'POST',
       body: JSON.stringify({
         languages: [sourceLanguage, targetLanguage],
         transcription: { client_vad: clientVad },
-        translation: {},
       }),
     },
   );
 }
 
+/**
+ * Issues an access token that opens the WebSockets of one Conversation. A browser cannot send the
+ * API key on a WebSocket, and the server refuses a key in the URL.
+ */
+export async function issueAccessToken(
+  endpoints: RealtimeEndpoints,
+  apiKey: string,
+  conversationId: string,
+): Promise<IssuedAccessToken> {
+  const response = await requestJson<AccessTokenResponse>(
+    `${endpoints.httpBaseUrl}/v1/access-tokens`,
+    apiKey,
+    {
+      method: 'POST',
+      body: JSON.stringify({ session_kind: 'conversation', session_id: conversationId }),
+    },
+    // Issuing again is harmless: a token is not stored on the server.
+    { retryNetworkFailure: true },
+  );
+  if (!response.access_token || !Number.isFinite(response.expires_at_ms)) {
+    throw new Error('Access token response is missing access_token or expires_at_ms.');
+  }
+  return { token: response.access_token, expiresAtMs: response.expires_at_ms };
+}
+
 /** Resolves once the Conversation is over, whether or not this call was the one that ended it. */
 export async function endConversation(
   endpoints: RealtimeEndpoints,
-  accessToken: string,
+  apiKey: string,
   conversationId: string,
 ): Promise<void> {
   try {
     await requestJson(
-      `${endpoints.httpBaseUrl}/conversations/${encodeURIComponent(conversationId)}/end`,
-      accessToken,
+      `${endpoints.httpBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/end`,
+      apiKey,
       { method: 'POST' },
       { retryNetworkFailure: true },
     );
@@ -80,18 +110,31 @@ export async function endConversation(
   }
 }
 
+/**
+ * `afterOrderSeq` is the last `order_seq` this client has handled in full. On connect the server
+ * first sends the finals stored after it; without it, every stored final.
+ */
 export function buildResultWebSocketUrl(
   endpoints: RealtimeEndpoints,
   conversationId: string,
+  accessToken: string,
+  afterOrderSeq: number | null = null,
 ): string {
-  return `${endpoints.websocketBaseUrl}/conversations/${encodeURIComponent(conversationId)}/results`;
+  const query = new URLSearchParams({ token: accessToken });
+  if (afterOrderSeq !== null) query.set('after_order_seq', String(afterOrderSeq));
+  return `${endpoints.websocketBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/results?${query}`;
 }
 
 export function buildAudioWebSocketUrl(
   endpoints: RealtimeEndpoints,
   conversationId: string,
   audioFormat: RealtimeAudioFormat,
+  accessToken: string,
 ): string {
-  const id = encodeURIComponent(conversationId);
-  return `${endpoints.websocketBaseUrl}/audio?conversation_id=${id}&audio_format=${audioFormat}`;
+  const query = new URLSearchParams({
+    conversation_id: conversationId,
+    audio_format: audioFormat,
+    token: accessToken,
+  });
+  return `${endpoints.websocketBaseUrl}/v1/audio?${query}`;
 }

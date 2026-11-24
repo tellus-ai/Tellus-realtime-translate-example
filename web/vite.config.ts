@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
     define: {
-      'import.meta.env.VITE_ACCESS_TOKEN': JSON.stringify(env.API_KEY?.trim() ?? ''),
+      'import.meta.env.VITE_API_KEY': JSON.stringify(env.API_KEY?.trim() ?? ''),
     },
     plugins: [react(), {
       name: 'local-recording-downloads',

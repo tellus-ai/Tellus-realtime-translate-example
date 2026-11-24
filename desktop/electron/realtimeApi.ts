@@ -44,14 +44,14 @@ interface RequestOptions {
 }
 
 export function createRealtimeApi(
-  config: { httpBaseUrl: string; accessToken: string },
+  config: { httpBaseUrl: string; apiKey: string },
   fetchFunction: FetchFunction,
 ): RealtimeApi {
   const post = <T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> => {
-    if (!config.accessToken) {
+    if (!config.apiKey) {
       return Promise.reject(new RealtimeApiError('Set API_KEY in desktop/.env and restart the app.', null));
     }
-    return requestJson<T>(fetchFunction, `${config.httpBaseUrl}${path}`, config.accessToken, {
+    return requestJson<T>(fetchFunction, `${config.httpBaseUrl}${path}`, config.apiKey, {
       method: 'POST',
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }, options);
@@ -59,10 +59,8 @@ export function createRealtimeApi(
 
   return {
     async createConversation() {
-      const response = await post<ConversationResponse | null>('/conversations', {
-        max_concurrent_viewers: 10,
-        conversation_audio_mode: 'single_speaker',
-      });
+      // No body: the settings are saved by the next call.
+      const response = await post<ConversationResponse | null>('/v1/conversations');
       if (!response?.conversation_id) {
         throw new Error('Conversation response is missing conversation_id.');
       }
@@ -70,16 +68,15 @@ export function createRealtimeApi(
     },
 
     async saveInterpretationSettings(conversationId, input) {
-      await post(`/conversations/${encodeURIComponent(conversationId)}/interpretation-settings`, {
+      await post(`/v1/conversations/${encodeURIComponent(conversationId)}/settings`, {
         languages: [input.sourceLanguage, input.targetLanguage],
         transcription: { client_vad: input.clientVad },
-        translation: {},
       });
     },
 
     async endConversation(conversationId) {
       try {
-        await post(`/conversations/${encodeURIComponent(conversationId)}/end`, undefined, {
+        await post(`/v1/conversations/${encodeURIComponent(conversationId)}/end`, undefined, {
           retryNetworkFailure: true,
         });
       } catch (error) {
@@ -103,13 +100,13 @@ export function toDesktopError(error: unknown): DesktopError {
 async function requestJson<T>(
   fetchFunction: FetchFunction,
   url: string,
-  accessToken: string,
+  apiKey: string,
   init: RequestInit,
   { retryNetworkFailure = false }: RequestOptions = {},
 ): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await requestOnce<T>(fetchFunction, url, accessToken, init);
+      return await requestOnce<T>(fetchFunction, url, apiKey, init);
     } catch (error) {
       const status = error instanceof RealtimeApiError ? error.status : undefined;
       // No response includes a request that ran into REQUEST_TIMEOUT_MS.
@@ -123,7 +120,7 @@ async function requestJson<T>(
 async function requestOnce<T>(
   fetchFunction: FetchFunction,
   url: string,
-  accessToken: string,
+  apiKey: string,
   init: RequestInit,
 ): Promise<T> {
   let response: Response;
@@ -133,7 +130,7 @@ async function requestOnce<T>(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${apiKey}`,
         ...init.headers,
       },
     });

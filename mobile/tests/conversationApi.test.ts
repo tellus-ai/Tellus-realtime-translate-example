@@ -1,6 +1,8 @@
 import {
   createConversation,
   buildAudioWebSocketUrl,
+  buildResultWebSocketUrl,
+  buildWebSocketHeaders,
   endConversation,
   saveInterpretationSettings,
 } from '../src/api/conversationApi';
@@ -18,7 +20,7 @@ describe('conversation API', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('includes translation settings when two languages are configured', async () => {
+  it('saves the two languages and client VAD through the /v1 settings route', async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
       text: async () => JSON.stringify({ statusCode: '200', message: ['ok'], data: {} }),
@@ -38,11 +40,51 @@ describe('conversation API', () => {
       true,
     );
 
-    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://example.test/v1/conversations/conversation-1/settings');
     expect(JSON.parse(String(request.body))).toEqual({
       languages: ['ko-KR', 'en-US'],
       transcription: { client_vad: true },
-      translation: {},
+    });
+    expect((request.headers as Record<string, string>).Authorization).toBe('Bearer token');
+  });
+
+  it('creates a Conversation through the /v1 route without a body', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ statusCode: '201', message: ['ok'], data: { conversation_id: 'c1' } }),
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    await expect(createConversation(endpoints, 'token')).resolves.toBe('c1');
+    const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://example.test/v1/conversations');
+    expect(request.method).toBe('POST');
+    expect(request.body).toBeUndefined();
+  });
+});
+
+describe('WebSocket handshake', () => {
+  it('opens the /v1 routes and keeps the API key out of the URL', () => {
+    expect(buildResultWebSocketUrl(endpoints, 'a/b')).toBe('wss://example.test/v1/conversations/a%2Fb/results');
+    expect(buildAudioWebSocketUrl(endpoints, 'a/b')).toBe(
+      'wss://example.test/v1/audio?conversation_id=a%2Fb&audio_format=opus',
+    );
+  });
+
+  it('adds after_order_seq to Result, including 0', () => {
+    expect(buildResultWebSocketUrl(endpoints, 'c1', 0)).toBe(
+      'wss://example.test/v1/conversations/c1/results?after_order_seq=0',
+    );
+    expect(buildResultWebSocketUrl(endpoints, 'c1', 12)).toBe(
+      'wss://example.test/v1/conversations/c1/results?after_order_seq=12',
+    );
+  });
+
+  it('sends the API key in the Authorization header, next to the allowed Origin', () => {
+    expect(buildWebSocketHeaders(endpoints, ' api-key ')).toEqual({
+      Origin: 'https://app.example.test',
+      Authorization: 'Bearer api-key',
     });
   });
 });
@@ -83,7 +125,7 @@ describe('conversation API retries', () => {
     it.each([200, 410, 404])('treats %i as ended', async (status) => {
       replies = [{ status, body: { message: ['Conversation has already ended.'] } }];
       expect(await settle(endConversation(endpoints, 'token', 'c1'))).toEqual({ value: undefined });
-      expect(requests).toEqual(['POST /conversations/c1/end']);
+      expect(requests).toEqual(['POST /v1/conversations/c1/end']);
     });
 
     it('calls again after 503 and after a network failure, waiting 1, 2, and 5 seconds', async () => {
@@ -132,7 +174,10 @@ describe('conversation API retries', () => {
       replies = [{ status: 503 }, created, { status: 503 }, { status: 200 }];
       expect(await settle(createConversation(endpoints, 'token'))).toEqual({ value: 'c1' });
       expect(await settle(saveSettings())).toEqual({ value: undefined });
-      expect(requests).toHaveLength(4);
+      expect(requests).toEqual([
+        'POST /v1/conversations', 'POST /v1/conversations',
+        'POST /v1/conversations/c1/settings', 'POST /v1/conversations/c1/settings',
+      ]);
     });
 
     // The Conversation may exist even though its response was lost; a second create would

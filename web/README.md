@@ -2,8 +2,8 @@
 
 Vite/React 예제입니다. `@tellus-ai/audio-sdk-web` 0.2.5의 Rust WASM 엔진으로 마이크 오디오를 처리하고 Tellus Realtime Speech 서버로 전송합니다.
 
-See the root [`README.md`](../README.md#api-contract) for the
-Swagger snapshot of the REST and WebSocket contracts used by this example.
+See the root [`README.md`](../README.md#api-contract) for the `/v1` REST and WebSocket contracts used by
+this example.
 
 ## Run
 
@@ -26,7 +26,7 @@ SDK의 `vendor/web`에 엔진 `.mjs`·`.wasm`과 암호화 모델이 준비되�
 `.npmrc`의 `install-links=true`로 `.sdk/platforms/web` 패키지를 앱의 `node_modules`에 복사 설치합니다. SDK가 사용하는 엔진은 **0.3.4**입니다. 다운로드 서버는 `wasm32-emscripten` archive와 `.sha256` 파일을 모두 허용하고 게시해야 합니다. `.sdk/`는 setup이 관리하는 로컬 빌드 캐시이며 다른 SDK 버전이 들어 있으면 삭제 후 `npm run setup`을 다시 실행합니다.
 
 Set the API key issued in the Tellus API Console in `API_KEY` in `.env`, select two different languages, and start the session.
-The token cannot be entered or changed in the browser UI. Restart the development server after changing
+The key cannot be entered or changed in the browser UI. Restart the development server after changing
 environment variables.
 
 The UI shows **Audio SDK: 사용 중 / 사용하지 않음** from the configured audio processing mode, independently of capture readiness. Start requires a
@@ -46,7 +46,7 @@ unlocks the VAD toggle.
 - `VITE_TELLUS_AUDIO_ASSET_BASE`: 엔진·ORT·암호화 모델 자산의 기준 URL. 기본값은 문서 URL 기준 `tellus-audio/`입니다.
 - `VITE_TELLUS_DENOISE=true`: FastEnhancer를 활성화합니다. 기본값은 `false`입니다.
 
-Start 버튼에서 AudioContext를 준비한 뒤 `/audio`의 엔진 permit을 검증하고 HPKE 모델 키를 적용합니다. 암호화 모델 복호화와 모델 로드는 Rust 엔진에서 수행하며 승인 완료 뒤 마이크를 시작합니다. API 키나 모델 콘텐츠 키를 SDK 자산에 포함하지 않습니다.
+Start 버튼에서 AudioContext를 준비한 뒤 `/v1/audio`의 엔진 permit을 검증하고 HPKE 모델 키를 적용합니다. 암호화 모델 복호화와 모델 로드는 Rust 엔진에서 수행하며 승인 완료 뒤 마이크를 시작합니다. API 키나 모델 콘텐츠 키를 SDK 자산에 포함하지 않습니다.
 
 AudioWorklet은 브라우저가 제공한 입력 프레임을 Worker로 전달합니다. Rust가 LPF·resample·AEC·FastEnhancer·DSP·limiter·Silero·Opus를 처리합니다. 브라우저 마이크의 echo cancellation, noise suppression, auto gain control은 비활성화합니다. ORT Web `1.24.1`은 Worker에서 single-thread WASM으로 실행합니다. `SharedArrayBuffer`와 교차 출처 격리 헤더는 필요하지 않습니다.
 
@@ -55,6 +55,24 @@ Silero 기본 positive/negative threshold는 `0.5` / `0.35`, silence는 `550 ms`
 마이크는 HTTPS 또는 localhost에서 사용할 수 있습니다. 배포 origin은 Realtime Speech 서버에서 허용되어야 합니다. 탭이 숨겨지면 승인을 취소하고, 다시 보일 때 새 permit을 얻어 마이크를 재개합니다. SDK 초기화는 클릭 전에 가능하며 AudioContext는 캡처를 시작할 때 재개합니다.
 
 `API_KEY`는 빌드 시 클라이언트 번들에 포함됩니다. 브라우저에 배포하는 값에는 만료일을 지정한 API 키를 사용합니다.
+
+## Access tokens
+
+A browser cannot set headers on a WebSocket, and the server refuses an API key in a URL. So this example
+opens both WebSockets with an access token:
+
+1. `POST /v1/conversations` and `POST /v1/conversations/{id}/settings`, with the API key.
+2. `POST /v1/access-tokens` with the API key and `{"session_kind": "conversation", "session_id": "<id>"}`.
+3. `WS /v1/conversations/{id}/results?token=<access token>` and `WS /v1/audio?...&token=<access token>`.
+
+A token lasts 15 minutes and opens only this Conversation. `src/api/accessTokens.ts` keeps the current one
+and issues the next when it is asked for a token that has less than a minute left: for a reconnect, and for
+each engine approval (`audio.authenticate`, `engine.renew`) that the audio SDK sends on `/v1/audio`. An open
+WebSocket is not closed when its token expires.
+
+This example calls step 1 and 2 from the browser so that it runs without a backend of its own. In
+production, make those calls, and `POST /v1/conversations/{id}/end`, from your server and give the browser
+only the access token; the API key then never reaches the browser.
 
 관련 공식 문서: [AudioWorklet 입력 프레임](https://developer.mozilla.org/en-US/docs/Web/API/AudioWorkletProcessor/process), [ORT WASM 환경 설정](https://onnxruntime.ai/docs/tutorials/web/env-flags-and-session-options.html), [Emscripten Asyncify](https://emscripten.org/docs/porting/asyncify.html).
 
@@ -71,21 +89,23 @@ The session follows
 | --- | --- |
 | `system.error` on either socket | Keeps it as that socket's last error. Nothing is shown until the socket closes. |
 | `conversation.ended`, close `1000`, or `1008` with `conversation_ended` or `conversation_not_found` | Shows the Conversation as `ended` and stops. No reconnect and no `POST /end`. |
-| `1008` with `audio_connection_replaced` | Stops with an error and leaves the Conversation open for the other device or tab. |
-| Any other `1008` | Stops with the server message and calls `POST /end`. |
+| `1008` with `audio_connection_replaced` or `results_connection_replaced` | Stops with an error and leaves the Conversation open for the other device or tab. |
+| Any other `1008`, including `auth_failed` | Stops with the server message and calls `POST /end`. |
+| `4401` | The server no longer accepts the API key. Stops with an error; reconnecting with the same key cannot succeed. |
 | `1012` | Reopens the socket after a random 0.5–2 seconds, then backs off. |
 | Any other close code, including `1006`, `1011`, and `1013` | Reopens the socket after 1, 2, 5, 10, then every 30 seconds, or after `retry_after_ms` when that is longer. A socket that closes while a reconnect is already waiting is reopened by that reconnect. |
 | A socket closes, or is not usable within 10 seconds, while starting (until both sockets are open and the microphone has started, that is, before the status is `recording`) | The start fails. Nothing is reconnected. |
-| Only the Result WebSocket closed | Recording and `/audio` continue. Only Result is reopened. |
-| `/audio` closed | Pauses the microphone and shows `reconnecting`. On the new socket a fresh native permit is required before capture resumes, and the wire sample cursor restarts at 0. The example sends an `audio.status` when authorization completes, which the server may ignore because no audio has arrived yet; Client VAD stays disabled while audio frames continue. A session that was paused stays paused. |
-| Both sockets closed | Opens Result first and `/audio` after `participants.snapshot`. |
+| Only the Result WebSocket closed | Recording and `/v1/audio` continue. Only Result is reopened. |
+| `/v1/audio` closed | Pauses the microphone and shows `reconnecting`. On the new socket a fresh native permit is required before capture resumes, and the wire sample cursor restarts at 0. The example sends an `audio.status` when authorization completes, which the server may ignore because no audio has arrived yet; Client VAD stays disabled while audio frames continue. A session that was paused stays paused. |
+| Both sockets closed | Opens Result first and `/v1/audio` once Result is open. Neither socket sends a ready message. |
+| The access token is about to expire when a reconnect starts | Issues a new one first. `404` or `410` from that request shows the Conversation as `ended`; `503` or no response moves to the next backoff step; any other status stops with the server message. |
 | A reconnect attempt is not usable within 10 seconds, or closes again | Moves to the next backoff step. The steps start over after both sockets stayed open for 30 seconds. |
 | Browser `online` event | A reconnect that is waiting runs at once. `offline` is ignored. |
-| Result reconnected | Shows the results that arrive from then on. Results sent while the Result WebSocket was closed are not recovered. |
-| Stop | Sends `speech_gate_closed` (if the gate is open) and `idle`, waits up to 2 seconds for the last finals, closes `/audio`, calls `POST /end`, and keeps Result open until `conversation.ended` or for 5 more seconds. |
-| REST `503` | Retries after 1, 2, and 5 seconds. A request that gets no response, which includes the 15-second request timeout, is retried only for `POST /end`. `POST /end` treats `410` and `404` as ended. When every retry fails, the example gives up; if the request was `POST /end`, the Conversation stays open until its state expires 24 hours after creation. |
+| Result reconnected | Connects with `after_order_seq` set to the last row that has its final transcript and translation. The server sends the finals stored after it again, so finals missed while the socket was closed arrive; previews from that time are lost. |
+| Stop | Sends `speech_gate_closed` (if the gate is open) and `idle`, waits up to 2 seconds for the last finals, closes `/v1/audio`, calls `POST /end`, and keeps Result open until `conversation.ended` or for 5 more seconds. |
+| REST `503` | Retries after 1, 2, and 5 seconds. A request that gets no response, which includes the 15-second request timeout, is retried only for `POST /end` and `POST /v1/access-tokens`. `POST /end` treats `410` and `404` as ended. When every retry fails, the example gives up; if the request was `POST /end`, the Conversation stays open until its state expires 24 hours after creation. |
 
-A reconnect shows only in the status (`reconnecting` while `/audio` is down) and in the connection state of
+A reconnect shows only in the status (`reconnecting` while `/v1/audio` is down) and in the connection state of
 each socket. The close code and reason are not shown. `error` holds the message that stopped the session; a
 malformed message on the Result WebSocket also sets it, and the session continues.
 
@@ -93,17 +113,22 @@ Source files:
 
 - `src/realtime/closePolicy.ts`: what each close means, and the backoff steps.
 - `src/realtime/RealtimeTranslationSession.ts`: sockets, reconnects, and the Stop sequence.
-- `src/realtime/resultParser.ts`: `system.error` and `participants.snapshot`.
-- `src/realtime/transcriptReducer.ts`: `awaitsFinal` tells which rows Stop still waits for.
-- `src/api/conversationApi.ts` and `src/api/httpClient.ts`: `POST /end` statuses and `503` retries.
+- `src/realtime/resultParser.ts`: the result item arrays and `system.error`.
+- `src/realtime/transcriptReducer.ts`: `awaitsFinal` tells which rows Stop still waits for, and
+  `lastCompleteOrderSeq` gives the `after_order_seq` of a reconnect.
+- `src/api/conversationApi.ts` and `src/api/httpClient.ts`: the `/v1` routes, `POST /end` statuses, and `503`
+  retries.
+- `src/api/accessTokens.ts`: the access token of the Conversation.
 
 Not implemented:
 
 - Reconnecting when no result arrives for 20 seconds while the speaker is talking.
-- Watching `bufferedAmount` on `/audio`.
-- Reconnecting `/audio` after 10 minutes without audio.
-- Filling in finals missed while the Result WebSocket was closed, with `GET /conversations/{id}/messages`.
-  [Reconnecting after a disconnect](../README.md#reconnecting-after-a-disconnect) describes how.
+- Watching `bufferedAmount` on `/v1/audio`.
+- Reconnecting `/v1/audio` after 10 minutes without audio.
+- Reading `GET /v1/conversations/{id}/results` for a final that is still missing right after a reconnect.
+  [Reconnecting after a disconnect](../README.md#reconnecting-after-a-disconnect) describes when that happens.
+- Three languages, `"auto"`, translated speech (`tts.completed`), and the company dictionary. The example
+  ignores the messages of those features.
 - Calling `POST /end` when the tab is closed. It is called on Stop, when the component unmounts, and when the
   session stops with an error, unless the close was `audio_connection_replaced` or the server had already
   reported the Conversation as ended.
@@ -135,12 +160,13 @@ npm run test:engine-browser
 
 이 테스트는 실제 production 웹 번들, AudioWorklet, ORT, Rust WASM, 암호화 FE/Silero, Opus를 실행합니다. localhost 서버는 테스트 permit·HPKE 키·REST·번역 결과만 제공합니다. 승인 전 입력 차단, 마이크 OS DSP 비활성화, pause/resume/reset, 재생과 취소, VAD 전이, 재연결·승인 거절 후 출력 차단을 검증합니다. 테스트 서버의 번역 문장은 외부 번역 서비스 검증 결과가 아닙니다.
 
-## 기존 서버 계약 Smoke Test
+## 서버 계약 Smoke Test
 
-이 스크립트는 SDK를 경유하지 않는 기존 서버 PCM16 계약 검사입니다. 실제 엔진 검증에는 `test:engine-browser`를 사용합니다.
+이 스크립트는 SDK를 경유하지 않는 `/v1` 서버 PCM16 계약 검사입니다. 실제 엔진 검증에는 `test:engine-browser`를 사용합니다.
 
 The test uses `API_KEY` from `.env` only as a Bearer token and never prints it. It creates a Conversation,
-verifies both WebSocket connections and PCM16 transmission, and then terminates the Conversation in `finally`.
+saves its settings, issues an access token, verifies both WebSocket connections with that token and PCM16
+transmission, and then terminates the Conversation in `finally`.
 
 ```bash
 npm run test:live

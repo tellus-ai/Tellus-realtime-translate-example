@@ -11,7 +11,7 @@ export function useRealtimeTranslation() {
     () => new RealtimeTranslationSession(
       realtimeSpeechConfig,
       new NativeMicrophone(),
-      realtimeSpeechConfig.accessToken,
+      realtimeSpeechConfig.apiKey,
     ),
     [],
   );

@@ -11,7 +11,7 @@ export interface SystemError {
   reason: string | null;
   /** `message[0]`, for display. */
   message: string;
-  /** `data.retry_after_ms`, sent with the `/audio` reconnect rate limit. */
+  /** `data.retry_after_ms`, sent with the `/v1/audio` reconnect rate limit. */
   retryAfterMs: number | null;
 }
 
@@ -39,7 +39,14 @@ export const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 export const STABLE_CONNECTION_MS = 30_000;
 
 const ENDED_REASONS = new Set(['conversation_ended', 'conversation_not_found']);
-const REPLACED_REASON = 'audio_connection_replaced';
+// A newer connection for the same Conversation took over this socket.
+const REPLACED_MESSAGES = new Map([
+  ['audio_connection_replaced', 'Another device or tab took over the audio of this Conversation.'],
+  ['results_connection_replaced', 'Another device or tab took over the results of this Conversation.'],
+]);
+// The server rechecks the API key while a socket is open and closes it with this code once the
+// key is revoked, expired, or changes scope. No `system.error` precedes it.
+const API_KEY_REJECTED_CODE = 4401;
 
 export function reconnectDelayMs(attempt: number): number {
   return RECONNECT_DELAYS_MS[Math.min(Math.max(attempt, 0), RECONNECT_DELAYS_MS.length - 1)];
@@ -55,16 +62,26 @@ export function decideSocketClose(close: SocketClose): CloseDecision {
 
   if (code === 1008) {
     if (reason !== null && ENDED_REASONS.has(reason)) return { action: 'ended', reason };
-    if (reason === REPLACED_REASON) {
+    const replaced = reason === null ? undefined : REPLACED_MESSAGES.get(reason);
+    if (replaced) {
       return {
         action: 'fail',
         reason,
-        message: 'Another device or tab took over the audio of this Conversation.',
+        message: replaced,
         // The Conversation is still in use there, so this client leaves it open.
         endConversation: false,
       };
     }
     return { action: 'fail', reason, message: describeRejection(close, reason), endConversation: true };
+  }
+
+  if (code === API_KEY_REJECTED_CODE) {
+    return {
+      action: 'fail',
+      reason,
+      message: `The server no longer accepts the API key. (${reason ?? code})`,
+      endConversation: true,
+    };
   }
 
   // 1012 is a server restart: spread the first reconnect so clients do not return at once.

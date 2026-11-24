@@ -5,8 +5,8 @@ capture, Silero VAD, and Opus encoding run in the native Tellus audio engine
 ([`@tellus-ai/audio-sdk-desktop`](https://github.com/tellus-ai/tellus-audio-sdk)) inside the Electron main process.
 The React screen started as a copy of the [web example](../web/README.md); nothing is imported from `web/`.
 
-See the root [`README.md`](../README.md#api-contract) for the Swagger snapshot of the
-REST and WebSocket contracts used by this example.
+See the root [`README.md`](../README.md#api-contract) for the `/v1` REST and WebSocket
+contracts used by this example.
 
 ## Run
 
@@ -36,8 +36,8 @@ The prefix follows the installation token environment, for example `stg/audio/en
 `404`; a missing artifact or invalid installation token must be resolved before setup can finish.
 
 `TELLUS_AUDIO_ENGINE_TOKEN` is the existing Tellus-issued customer installation token. Installation
-does not use `API_KEY` or require an app login. `API_KEY` remains the API key issued in the Tellus API Console for REST calls
-and engine execution approval at runtime. Installation and execution token renewal are separate.
+does not use `API_KEY` or require an app login. `API_KEY` remains the API key issued in the Tellus API Console for REST calls,
+the WebSocket handshakes, and engine execution approval at runtime. Installation and execution token renewal are separate.
 Setup loads `.env` and passes both the engine token and download base URL to npm and its child
 processes. The download server must match the installation token's environment; set
 `TELLUS_AUDIO_DOWNLOAD_BASE_URL` separately when the runtime server uses a different environment. Setup runs `npm ci`
@@ -63,8 +63,8 @@ not configured. The engine's native addon, ONNX Runtime library, and models are 
 
 The build writes `dist/runtime.env` with only `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, `API_KEY`, and
 `TELLUS_AUDIO_SDK_ENABLED`, and the packaged app reads that file. `TELLUS_AUDIO_ENGINE_TOKEN` is never bundled. `API_KEY` is,
-so anyone with the app can extract it, the same way the web build exposes the token in its bundle. Use a
-short-lived, restricted access token and do not distribute builds that contain your own token.
+so anyone with the app can extract it, the same way the web build exposes the key in its bundle. Use an
+API key with an expiry date and do not distribute builds that contain your own key.
 
 ## Architecture
 
@@ -72,7 +72,7 @@ The main process owns the whole session; the renderer only draws it.
 
 | Process | Responsibility |
 | --- | --- |
-| Main | Audio engine capture, REST calls with `API_KEY`, Result and Audio WebSockets (`ws`), reconnects, transcript state |
+| Main | Audio engine capture, REST calls and the Result and Audio WebSockets (`ws`) with `API_KEY`, reconnects, transcript state |
 | Renderer | Language and VAD selection, Audio SDK status, Start/Pause/Resume/Stop, rendering the session snapshot pushed over IPC |
 
 - **Audio SDK.** `AudioEngine.init()` runs at app start with client VAD disabled. Each session requires
@@ -93,10 +93,14 @@ The main process owns the whole session; the renderer only draws it.
   Audio WebSocket invalidates permission and stops capture; its reconnect obtains a new permit before
   capture starts again. A reconnect of only the Result WebSocket leaves the permit and capture alone.
   Terminal authorization denial stops the session. See
-  [Native engine authorization on `/audio`](#native-engine-authorization-on-audio).
-- **Login credentials.** Each REST call and engine authorization request rereads `API_KEY` from the
-  environment/runtime file. Engine permit renewal does not refresh the login JWT itself. Supply a valid
-  login token; a production integration should obtain refreshed credentials from its login service.
+  [Native engine authorization on `/v1/audio`](#native-engine-authorization-on-v1audio).
+- **API key.** Each REST call, WebSocket handshake, and engine authorization request rereads `API_KEY`
+  from the environment/runtime file. Both `/v1` WebSockets need a credential, and the main process sends
+  the key as `Authorization: Bearer <key>` in the handshake. The key never goes into a URL; the server
+  refuses it there. A browser cannot set that header and opens the same sockets with an access token
+  from `POST /v1/access-tokens` instead, as the [web example](../web/README.md) does; this example
+  does not need one. While a socket is open the server rechecks the key and closes the socket with
+  `4401` once the key is revoked, expired, or changes scope.
 - **Client VAD.** The SDK gate stays off (`vadEnabled: false`, `setVadEnabled(false)`) and interpretation
   settings always use `client_vad: false`, even if a caller requests client VAD. Pause, resume, and
   reconnect preserve this setting; `audio.status` reports `vad.enabled: false` without gate events.
@@ -123,20 +127,21 @@ The session follows
 | --- | --- |
 | `system.error` on either socket | Keeps it as that socket's last error. Nothing is shown until the socket closes. |
 | `conversation.ended`, close `1000`, or `1008` with `conversation_ended` or `conversation_not_found` | Shows the Conversation as `ended` and stops. No reconnect and no `POST /end`. |
-| `1008` with `audio_connection_replaced` | Stops with an error and leaves the Conversation open for the other device or tab. |
-| Any other `1008` | Stops with the server message and calls `POST /end`. The native authorization reasons that differ are listed [below](#native-engine-authorization-on-audio). |
+| `1008` with `audio_connection_replaced` or `results_connection_replaced` | Stops with an error and leaves the Conversation open for the other device or tab. A Conversation has one Result WebSocket and one `/v1/audio` connection per speaker. |
+| Any other `1008`, such as `auth_failed` | Stops with the server message and calls `POST /end`. The native authorization reasons that differ are listed [below](#native-engine-authorization-on-v1audio). |
+| `4401` | Stops with an error: the server no longer accepts the API key, so a reconnect with the same key would be refused. `POST /end` is still attempted. |
 | `1012` | Reopens the socket after a random 0.5–2 seconds, then backs off. |
 | Any other close code, including `1006`, `1011`, and `1013` | Reopens the socket after 1, 2, 5, 10, then every 30 seconds, or after `retry_after_ms` when that is longer. A socket that closes while a reconnect is already waiting is reopened by that reconnect. |
-| A socket closes, or is not usable in time, while starting (until both sockets are open and the engine is authorized, that is, before the status is `recording`) | The start fails. Nothing is reconnected. Result has 10 seconds to send `participants.snapshot`. `/audio` has 10 seconds to open, and the engine authorization then has its own 10 seconds. |
-| Only the Result WebSocket closed | Capture, the engine authorization, and `/audio` continue. Only Result is reopened. |
-| `/audio` closed | Disposes the engine authorization, which stops native capture, and shows `reconnecting`. The new socket is authorized first; then capture starts again and the sample cursor restarts at 0. The example sends an `audio.status` when the socket is authorized, which the server may ignore because no audio has arrived yet; Client VAD stays disabled while audio frames continue. A session that was paused stays paused. |
-| Both sockets closed | Opens Result first and `/audio` after `participants.snapshot`. |
+| A socket closes, or is not usable in time, while starting (until both sockets are open and the engine is authorized, that is, before the status is `recording`) | The start fails. Nothing is reconnected. Each socket has 10 seconds to open. Neither sends a ready message: Result is usable once it is open, and the engine authorization on `/v1/audio` then has its own 10 seconds. |
+| Only the Result WebSocket closed | Capture, the engine authorization, and `/v1/audio` continue. Only Result is reopened. |
+| `/v1/audio` closed | Disposes the engine authorization, which stops native capture, and shows `reconnecting`. The new socket is authorized first; then capture starts again and the sample cursor restarts at 0. The example sends an `audio.status` when the socket is authorized, which the server may ignore because no audio has arrived yet; Client VAD stays disabled while audio frames continue. A session that was paused stays paused. |
+| Both sockets closed | Opens Result first and `/v1/audio` once Result is open. |
 | A reconnect attempt is not usable in time, or closes again | Moves to the next backoff step. The steps start over after both sockets stayed open for 30 seconds. |
-| Result reconnected | Shows the results that arrive from then on. Results sent while the Result WebSocket was closed are not recovered. |
-| Stop | Sends `speech_gate_closed` (if the gate is open) and `idle`, waits up to 2 seconds for the last finals, closes `/audio`, calls `POST /end`, and keeps Result open until `conversation.ended` or for 5 more seconds. Quitting the app skips both waits. |
+| Result reconnected | Opens it with `after_order_seq`, the last `order_seq` up to which every row has its final transcript and translation. The server first sends the finals stored after it and then live results, so finals missed while the socket was closed are filled in. The same final arriving twice replaces the same row. Previews from the gap are not sent again. |
+| Stop | Sends `speech_gate_closed` (if the gate is open) and `idle`, waits up to 2 seconds for the last finals, closes `/v1/audio`, calls `POST /end`, and keeps Result open until `conversation.ended` or for 5 more seconds. Quitting the app skips both waits. |
 | REST `503` | Retries after 1, 2, and 5 seconds. A request that gets no response, which includes the 15-second request timeout, is retried only for `POST /end`. `POST /end` treats `410` and `404` as ended. When every retry fails, the example gives up; if the request was `POST /end`, the Conversation stays open until its state expires 24 hours after creation. |
 
-A reconnect shows only in the status (`reconnecting` while `/audio` is down) and in the connection state of
+A reconnect shows only in the status (`reconnecting` while `/v1/audio` is down) and in the connection state of
 each socket. The close code and reason are not shown. `error` holds the message that stopped the session; a
 malformed message on the Result WebSocket also sets it, and the session continues.
 
@@ -145,18 +150,21 @@ Source files:
 - `electron/realtime/closePolicy.ts`: what each close means, and the backoff steps.
 - `electron/realtime/RealtimeTranslationSession.ts`: sockets, the engine authorization, reconnects, and
   the Stop sequence.
-- `electron/realtime/nodeWebSocket.ts`: opens the WebSockets with `ws`.
-- `electron/realtime/resultParser.ts`: `system.error` and `participants.snapshot`.
-- `electron/realtime/transcriptReducer.ts`: `awaitsFinal` tells which rows Stop still waits for.
+- `electron/realtime/nodeWebSocket.ts`: opens the WebSockets with `ws` and the API key header.
+- `electron/realtime/resultParser.ts`: `system.error` and the result messages, which carry item arrays
+  (`data.utterances[]`, `data.translations[]`).
+- `electron/realtime/transcriptReducer.ts`: `awaitsFinal` tells which rows Stop still waits for, and
+  `lastCompleteOrderSeq` gives the `after_order_seq` of a Result reconnect.
 - `electron/realtimeApi.ts`: `POST /end` statuses and `503` retries.
 
 Not implemented:
 
 - Reconnecting when no result arrives for 20 seconds while the speaker is talking.
-- Watching `bufferedAmount` on `/audio`.
-- Reconnecting `/audio` after 10 minutes without audio.
-- Filling in finals missed while the Result WebSocket was closed, with `GET /conversations/{id}/messages`.
-  [Reconnecting after a disconnect](../README.md#reconnecting-after-a-disconnect) describes how.
+- Watching `bufferedAmount` on `/v1/audio`.
+- Reconnecting `/v1/audio` after 10 minutes without audio.
+- Reading `GET /v1/conversations/{id}/results` for a final that is still missing after a reconnect. The
+  reconnect itself asks for the stored finals with `after_order_seq`; a final stored at that very moment
+  can be missed. [Reconnecting after a disconnect](../README.md#reconnecting-after-a-disconnect) describes how.
 - Reconnecting at once when the network comes back. The main process has no browser `online` event, so a
   reconnect that is waiting keeps its backoff delay.
 
@@ -169,23 +177,26 @@ of the `WebSocket` built into Node.js and Electron. Before an error close the se
 close looked like a network drop and the app kept reconnecting to Conversations that had ended. `ws`
 reports the message, the close code, and the reason.
 
+`ws` also sends the `Authorization` header that both `/v1` WebSockets require. The `WebSocket` of a
+browser cannot set request headers.
+
 `ws` is a runtime dependency, so it is packaged with the app. `electron/realtime/nodeWebSocket.ts` adds an
 `error` listener to every socket: in `ws` an `error` event without a listener is an uncaught exception,
 and the session detaches its handlers before it closes a socket.
 
-### Native engine authorization on `/audio`
+### Native engine authorization on `/v1/audio`
 
-`audio.authenticate` and `engine.renew` add these close reasons to `/audio`. They arrive like the others:
+`audio.authenticate` and `engine.renew` add these close reasons to `/v1/audio`. They arrive like the others:
 in `data.reason` of a `system.error` and as the reason of the close that follows.
 
 | Reason | Code | Meaning | What the example does |
 | --- | --- | --- | --- |
 | `engine_conversation_inactive` | `1008` | The Conversation has ended or does not exist. | Shows the Conversation as `ended` and stops. No `POST /end`. |
-| `engine_connection_superseded` | `1008` | A newer `/audio` connection replaced this socket. | Same as `audio_connection_replaced`: stops with an error and leaves the Conversation open. |
-| `engine_authorization_expired` | `1008` | The permit expired without a renewal. | Reopens `/audio` with backoff, because the new socket gets a new permit. This is the only `1008` that is reconnected. |
-| `engine_authentication_failed` | `1008` | The login token is invalid or expired. | Stops with the server message and calls `POST /end`. |
+| `engine_connection_superseded` | `1008` | A newer `/v1/audio` connection replaced this socket. | Same as `audio_connection_replaced`: stops with an error and leaves the Conversation open. |
+| `engine_authorization_expired` | `1008` | The permit expired without a renewal. | Reopens `/v1/audio` with backoff, because the new socket gets a new permit. This is the only `1008` that is reconnected. |
+| `engine_authentication_failed` | `1008` | The API key is invalid or expired. | Stops with the server message and calls `POST /end`. |
 | `engine_access_denied`, `engine_authentication_invalid`, `engine_authentication_required`, `engine_request_replayed` | `1008` | No permission, or an invalid request. | Stops with the server message and calls `POST /end`. |
-| `engine_authentication_unavailable`, `engine_authorization_unavailable`, `engine_authorization_unconfigured` | `1013` | A temporary failure, or the server is not configured for engine authorization. | Reopens `/audio` with backoff. |
+| `engine_authentication_unavailable`, `engine_authorization_unavailable`, `engine_authorization_unconfigured` | `1013` | A temporary failure, or the server is not configured for engine authorization. | Reopens `/v1/audio` with backoff. |
 
 A renewal that fails temporarily does not close the socket. The server answers `engine.denied` with
 `retryable: true`, and the authorization module asks again.
@@ -196,18 +207,19 @@ A renewal that fails temporarily does not close the socket. The server answers `
 close or a connection error itself. The session does not treat these three as failures:
 
 - It attaches its own handlers before the authorization module, keeps the `system.error`, and waits for
-  the close. The rules above are applied to that close, so a `1013` reopens `/audio` instead of ending the
+  the close. The rules above are applied to that close, so a `1013` reopens `/v1/audio` instead of ending the
   session.
 - Capture has already stopped by then, because the module invalidated the permit. Pause and Resume do
   nothing until the close has been handled.
 - If no close arrives within 10 seconds, the socket is handled like a `1006`.
 
-Two errors of the module close `/audio` and reconnect it like a `1006`, because a new socket is
+Two errors of the module close `/v1/audio` and reconnect it like a `1006`, because a new socket is
 authorized from the start: `engine_authorization_timeout` (no answer to a request within 10 seconds) and
 `engine_authorization_expired` (the module found that the permit ran out before a renewal succeeded).
 The second one is the same situation as the server's `1008` `engine_authorization_expired` above, and
-either can arrive first. If the login token itself has expired, the server refuses the new socket with
-`1008` `engine_authentication_failed`, which stops the session.
+either can arrive first. If the API key itself has expired or was revoked, the server refuses the new
+socket with `1008` (`auth_failed` at the handshake, or `engine_authentication_failed` for the approval),
+which stops the session.
 
 Any other error from the module, such as a final `engine.denied` (`engine_access_denied`) or
 `engine_authorization_response_invalid`, stops the session and calls `POST /end`.
@@ -218,7 +230,7 @@ Any other error from the module, such as a final `engine.denied` (`engine_access
 | --- | --- | --- |
 | `REALTIME_SPEECH_HTTP_URL` | `https://public.speech.tellus.ai.kr` | `http:` is allowed only for localhost |
 | `REALTIME_SPEECH_WS_URL` | `wss://public.speech.tellus.ai.kr` | `ws:` is allowed only for localhost |
-| `API_KEY` | | API key from the Tellus API Console, sent as `Authorization: Bearer <key>` |
+| `API_KEY` | | API key from the Tellus API Console, sent as `Authorization: Bearer <key>` on REST calls and on both WebSocket handshakes |
 | `TELLUS_AUDIO_DOWNLOAD_BASE_URL` | public speech HTTP URL | Realtime Speech artifact token API for native engine downloads |
 | `TELLUS_AUDIO_ENGINE_TOKEN` | | Existing Tellus-issued customer installation token; installation only |
 
@@ -241,9 +253,9 @@ process environment take precedence. Vite does not load `.env` for the renderer 
 | `electron/audio/audioEngine.ts` | The only module that imports `@tellus-ai/audio-sdk-desktop` |
 | `electron/realtime/RealtimeTranslationSession.ts` | Session lifecycle, WebSockets, engine authorization, `audio.status`, reconnects |
 | `electron/realtime/closePolicy.ts` | What each WebSocket close means, and the backoff steps |
-| `electron/realtime/nodeWebSocket.ts` | Opens the WebSockets with the `ws` package |
+| `electron/realtime/nodeWebSocket.ts` | Opens the WebSockets with the `ws` package and the API key header |
 | `electron/realtime/VADAudioStatus.ts` | `audio.status` message builder |
-| `electron/realtimeApi.ts` | REST client with the bearer token and `503` retries |
+| `electron/realtimeApi.ts` | REST client for the `/v1` routes with the API key and `503` retries |
 | `electron/realtimeIpc.ts` | IPC handlers and input validation |
 | `electron/rendererProtocol.ts` | Serves the packaged renderer from `tellus-translate://app` |
 | `electron/security.ts` | Trusted origin, permissions, CSP, navigation lock |
@@ -283,14 +295,15 @@ npm run test:engine-auth
 
 This creates and ends its own conversation, verifies native approval and invalid-token rejection,
 and never enables microphone or speaker capture. For a dev-only test, change the three HTTP/WS/download
-base URLs in your ignored `.env` to `https://devrtsapi.tellus.ai.kr` / `wss://devrtsapi.tellus.ai.kr`
+base URLs in your ignored `.env` to `https://public.devspeech.tellus.ai.kr` / `wss://public.devspeech.tellus.ai.kr`
 and use a dev console `API_KEY`; the checked-in defaults use the production public speech server.
 
 ## Live Development Server Smoke Test
 
 Like the web smoke test, this uses `API_KEY` from `.env` only as a Bearer token and never prints it. It
-creates a Conversation, connects both WebSockets without an Origin header as the app does, sends PCM16 audio,
-and ends the Conversation in `finally`. Set `SMOKE_ORIGIN` to check how the server treats a browser origin.
+creates a Conversation on the `/v1` routes, connects both WebSockets as the app does (the API key in the
+`Authorization` header, no Origin header), checks that the server does not refuse either one, sends PCM16
+audio, and ends the Conversation in `finally`. Set `SMOKE_ORIGIN` to check how the server treats a browser origin.
 
 ```bash
 npm run test:live

@@ -2,57 +2,58 @@ import WebSocket from 'ws';
 
 const httpBaseUrl = requiredEnvironment('VITE_REALTIME_SPEECH_HTTP_URL').replace(/\/+$/, '');
 const websocketBaseUrl = requiredEnvironment('VITE_REALTIME_SPEECH_WS_URL').replace(/\/+$/, '');
-const accessToken = requiredEnvironment('API_KEY');
+const apiKey = requiredEnvironment('API_KEY');
 const origin = process.env.SMOKE_ORIGIN || 'http://127.0.0.1:4173';
 
+// 서버가 연결을 받은 직후 system.error와 close로 거절할 수 있어, 끝까지 기록해 둔다.
+const refusals = [];
 let conversationId = null;
 let resultSocket = null;
 let audioSocket = null;
 
 try {
-  console.log('1/6 health 확인');
+  console.log('1/7 health 확인');
   await requestJson('/health', { authenticated: false });
 
-  console.log('2/6 Conversation 생성');
-  const conversation = await requestJson('/conversations', {
-    body: {
-      max_concurrent_viewers: 10,
-      conversation_audio_mode: 'single_speaker',
-    },
-  });
+  console.log('2/7 Conversation 생성');
+  const conversation = await requestJson('/v1/conversations', { method: 'POST' });
   conversationId = readConversationId(conversation);
+  const id = encodeURIComponent(conversationId);
 
-  console.log('3/6 번역 설정 저장');
-  await requestJson(`/conversations/${encodeURIComponent(conversationId)}/interpretation-settings`, {
+  console.log('3/7 번역 설정 저장');
+  await requestJson(`/v1/conversations/${id}/settings`, {
     body: {
       languages: ['ko-KR', 'en-US'],
       transcription: { client_vad: false },
-      translation: {},
     },
   });
 
-  console.log('4/6 Result WebSocket 연결');
-  resultSocket = createSocket(
-    `${websocketBaseUrl}/conversations/${encodeURIComponent(conversationId)}/results`,
-  );
-  const resultReady = waitForResultReady(resultSocket);
-  await waitForOpen(resultSocket);
-  await resultReady;
+  // 브라우저는 WebSocket에 API 키를 실을 수 없으므로 웹 예제와 같이 입장권으로 연다.
+  console.log('4/7 입장권 발급');
+  const issued = await requestJson('/v1/access-tokens', {
+    body: { session_kind: 'conversation', session_id: conversationId },
+  });
+  if (typeof issued?.access_token !== 'string' || !issued.access_token) throw new Error('응답에 access_token이 없습니다.');
+  const token = encodeURIComponent(issued.access_token);
 
-  console.log('5/6 Audio WebSocket 연결 및 PCM16 전송');
-  audioSocket = createSocket(
-    `${websocketBaseUrl}/audio?conversation_id=${encodeURIComponent(conversationId)}&audio_format=pcm16`,
-  );
+  // ready 메시지가 없다. 연결이 열리면 쓸 수 있다.
+  console.log('5/7 Result WebSocket 연결');
+  resultSocket = createSocket('Result', `${websocketBaseUrl}/v1/conversations/${id}/results?token=${token}`);
+  await waitForOpen(resultSocket);
+
+  console.log('6/7 Audio WebSocket 연결 및 PCM16 전송');
+  audioSocket = createSocket('Audio', `${websocketBaseUrl}/v1/audio?conversation_id=${id}&audio_format=pcm16&token=${token}`);
   await waitForOpen(audioSocket);
   await sendSilence(audioSocket);
+  if (refusals.length > 0) throw new Error(`서버가 연결을 거절했습니다: ${refusals.join('; ')}`);
 
-  console.log('6/6 원격 연결 smoke 성공');
+  console.log('7/7 원격 연결 smoke 성공');
 } finally {
   closeSocket(audioSocket);
   closeSocket(resultSocket);
   if (conversationId !== null) {
     console.log('정리: 테스트 Conversation 종료');
-    await requestJson(`/conversations/${encodeURIComponent(conversationId)}/end`, { method: 'POST' });
+    await requestJson(`/v1/conversations/${encodeURIComponent(conversationId)}/end`, { method: 'POST' });
   }
 }
 
@@ -64,7 +65,7 @@ function requiredEnvironment(name) {
 
 async function requestJson(path, options = {}) {
   const headers = { 'Content-Type': 'application/json' };
-  if (options.authenticated !== false) headers.Authorization = `Bearer ${accessToken}`;
+  if (options.authenticated !== false) headers.Authorization = `Bearer ${apiKey}`;
   const response = await fetch(`${httpBaseUrl}${path}`, {
     method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
     headers,
@@ -88,7 +89,9 @@ function unwrapEnvelope(body) {
 function readPublicMessage(body) {
   if (!body || typeof body !== 'object') return typeof body === 'string' ? body : '';
   if (Array.isArray(body.message)) return body.message.find((item) => typeof item === 'string') || '';
-  return typeof body.message === 'string' ? body.message : '';
+  if (typeof body.message === 'string') return body.message;
+  // POST /v1/access-tokens는 오류를 {"detail": "..."}로 돌려준다.
+  return typeof body.detail === 'string' ? body.detail : '';
 }
 
 function readConversationId(body) {
@@ -97,8 +100,20 @@ function readConversationId(body) {
   return value;
 }
 
-function createSocket(url) {
-  return new WebSocket(url, { headers: { Origin: origin } });
+function createSocket(name, url) {
+  const socket = new WebSocket(url, { headers: { Origin: origin } });
+  let closedHere = false;
+  socket.closeFromHere = () => { closedHere = true; socket.close(1000); };
+  socket.on('message', (data, isBinary) => {
+    if (isBinary) return;
+    let payload;
+    try { payload = JSON.parse(data.toString()); } catch { return; }
+    if (payload?.type === 'system.error') refusals.push(`${name} system.error ${payload.data?.reason ?? ''} ${readPublicMessage(payload)}`.trim());
+  });
+  socket.on('close', (code, reason) => {
+    if (!closedHere) refusals.push(`${name} closed ${code} ${reason.toString()}`.trim());
+  });
+  return socket;
 }
 
 function waitForOpen(socket) {
@@ -110,23 +125,6 @@ function waitForOpen(socket) {
       if (socket.readyState !== WebSocket.OPEN) {
         clearTimeout(timeout);
         reject(new Error(`WebSocket closed before open: ${code} ${reason.toString()}`));
-      }
-    });
-  });
-}
-
-function waitForResultReady(socket) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('participants.snapshot timeout')), 10_000);
-    socket.on('message', (data) => {
-      let payload;
-      try { payload = JSON.parse(data.toString()); } catch { return; }
-      if (payload?.type === 'system.error') {
-        clearTimeout(timeout);
-        reject(new Error(readPublicMessage(payload) || 'Result WebSocket system.error'));
-      } else if (payload?.type === 'participants.snapshot') {
-        clearTimeout(timeout);
-        resolve();
       }
     });
   });
@@ -158,6 +156,6 @@ function audioStatus(state, sample, sequence) {
 
 function closeSocket(socket) {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-    socket.close(1000);
+    socket.closeFromHere();
   }
 }

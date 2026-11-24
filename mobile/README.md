@@ -1,6 +1,6 @@
 # 모바일 실시간 번역 예제
 
-Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile` 0.2.5가 OS 캡처, Rust DSP·FastEnhancer·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/audio`로 전달한다.
+Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile` 0.2.5가 OS 캡처, Rust DSP·FastEnhancer·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/v1/audio`로 전달한다. 서버 호출은 모두 `/v1` 경로를 사용한다.
 
 ```sh
 cp .env.example .env
@@ -24,7 +24,7 @@ npm run ios
 # 또는 npm run android
 ```
 
-`.env`의 `API_KEY`에 Tellus API 콘솔에서 발급한 API 키를 설정하고 서로 다른 두 언어를 선택한다. `/audio` socket의 `attachEngineAuthorization.ready`가 permit과 모델 키를 적용한 뒤 마이크 권한을 요청하고 캡처를 시작한다. 새 socket마다 같은 capture를 재승인하며, 승인 폐기 시 OS 캡처와 대기 출력도 중단한다.
+`.env`의 `API_KEY`에 Tellus API 콘솔에서 발급한 API 키를 설정하고 서로 다른 두 언어를 선택한다. `POST /v1/conversations`로 Conversation을 만들고 `POST /v1/conversations/{id}/settings`로 두 언어를 저장한 뒤, 결과 socket(`/v1/conversations/{id}/results`)과 `/v1/audio` socket을 연다. 두 socket은 handshake의 `Authorization: Bearer <API 키>` 헤더와 `Origin` 헤더로 인증한다. React Native는 WebSocket 헤더를 설정할 수 있으므로 연결 입장권(`POST /v1/access-tokens`)을 사용하지 않으며, API 키를 URL에 넣지 않는다(서버가 거절한다). 결과 socket은 ready 메시지 없이 열리는 즉시 사용하고, 재연결할 때는 `after_order_seq`로 마지막으로 완료한 발화 번호를 전달해 끊긴 동안의 확정 결과를 다시 받는다. `/v1/audio` socket의 `attachEngineAuthorization.ready`가 permit과 모델 키를 적용한 뒤 마이크 권한을 요청하고 캡처를 시작한다. 엔진 승인과 갱신에도 같은 API 키를 전달한다. 새 socket마다 같은 capture를 재승인하며, 승인 폐기 시 OS 캡처와 대기 출력도 중단한다.
 
 - 처리·전송: Opus, 16kHz mono, 20ms
 - denoise: FastEnhancer 기본 활성화; `EXPO_PUBLIC_TELLUS_DENOISE=false`로 초기 비활성화 가능. **Noise Reduction (Denoise)** 스위치로 Start 전과 녹음·일시정지 중에 변경할 수 있다. SDK의 `setDenoiseEnabled()`로 적용한 뒤 `getStatus()`로 확인하며, **Audio SDK denoise**에 적용 상태를 표시한다. 선택값은 Stop 후 다음 세션에도 유지하고, 적용 실패는 번역을 종료하지 않고 표시한다.
@@ -33,7 +33,7 @@ npm run ios
 - background·interruption·route 변경: 자동 캡처 재개 없이 중단하며 새 승인이 필요한 연결은 재승인 후 재개
 - TTS: SDK `playback` 또는 `playbackEncoded`를 사용하면 OS 재생과 같은 PCM이 Rust AEC reference에 들어간다
 
-`npm start`, `npm run ios`, `npm run android`와 이를 실행하는 `./dev.sh start`, `./dev.sh ios`, `./dev.sh android`는 모두 `mobile/.env`를 읽는다. 서버 URL과 Origin은 `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, `APP_ORIGIN`으로 설정하며, 공통 `app.config.ts`가 Expo `extra`를 통해 앱에 전달한다. 기존 `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_WS_URL`, `EXPO_PUBLIC_APP_ORIGIN`도 지원하고, 두 형식이 함께 있으면 접두사가 없는 변수를 우선한다. `APP_ORIGIN`에는 서버에서 허용한 값을 지정해야 한다. 설정 변경 후 실행 중인 Metro를 종료하고 사용할 실행 명령을 다시 실행한다. access token은 앱 bundle에 포함되므로 partner secret이나 모델 content key를 넣지 않는다.
+`npm start`, `npm run ios`, `npm run android`와 이를 실행하는 `./dev.sh start`, `./dev.sh ios`, `./dev.sh android`는 모두 `mobile/.env`를 읽는다. 서버 URL과 Origin은 `REALTIME_SPEECH_HTTP_URL`, `REALTIME_SPEECH_WS_URL`, `APP_ORIGIN`으로 설정하며, 공통 `app.config.ts`가 Expo `extra`를 통해 앱에 전달한다. 기존 `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_WS_URL`, `EXPO_PUBLIC_APP_ORIGIN`도 지원하고, 두 형식이 함께 있으면 접두사가 없는 변수를 우선한다. `APP_ORIGIN`에는 서버에서 허용한 값을 지정해야 한다. 설정 변경 후 실행 중인 Metro를 종료하고 사용할 실행 명령을 다시 실행한다. API 키는 앱 bundle에 포함되므로 만료일을 지정한 키를 사용하고, partner secret이나 모델 content key를 넣지 않는다. 실제 서비스에서는 API 키를 자체 서버에 두고 앱에는 `POST /v1/access-tokens`로 발급한 연결 입장권만 전달하는 구성을 권장한다.
 
 ```sh
 npm run verify:pre-commit

@@ -4,7 +4,10 @@ import type { AudioChunk } from '@tellus-ai/audio-sdk-web';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 
 const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test' };
-const END_PATH = '/conversations/conversation-1/end';
+const END_PATH = '/v1/conversations/conversation-1/end';
+const TOKEN_PATH = '/v1/access-tokens';
+const TOKEN_LIFETIME_MS = 15 * 60_000;
+const NETWORK_FAILURE = 'network failure';
 const ENDED_BY_SERVER = { phase: 'ended', error: null };
 
 /** What the client sent, closed, and requested, in the order it happened. */
@@ -22,6 +25,9 @@ const server = {
   endGate: Promise.resolve(),
   /** `POST /end` is never answered. */
   endHangs: false,
+  /** Answers for the next `POST /v1/access-tokens` calls; a new token once the list is empty. */
+  tokenReplies: [] as Array<number | typeof NETWORK_FAILURE>,
+  tokensIssued: 0,
 };
 
 function gate(): { opened: Promise<void>; open: () => void } {
@@ -48,7 +54,11 @@ class FakeMicrophone implements MicrophoneRecorder {
 
   async prepare(clientVad: boolean): Promise<void> { if (this.prepareError) throw this.prepareError; this.clientVad = clientVad; }
 
-  async authorize(socket: WebSocket): Promise<void> {
+  /** What the engine approval asks for on each renewal. */
+  getAccessToken: (() => Promise<string>) | null = null;
+
+  async authorize(socket: WebSocket, _conversationId: string, getAccessToken: () => Promise<string>): Promise<void> {
+    this.getAccessToken = getAccessToken;
     if (socket.readyState !== WebSocket.OPEN) {
       await new Promise<void>((resolve) => {
         const opened = socket.onopen;
@@ -113,17 +123,16 @@ class FakeSocket {
   onmessage: ((event: MessageEvent) => void) | null = null;
 
   constructor(readonly url: string) {
-    this.kind = url.includes('/audio?') ? 'audio' : 'result';
+    this.kind = url.includes('/v1/audio?') ? 'audio' : 'result';
     FakeSocket.instances.push(this);
     queueMicrotask(() => FakeSocket.onConnect(this));
   }
 
-  /** The server accepts the connection. Result then sends its ready message. */
-  accept(): void {
-    this.open();
-    if (this.kind === 'result') this.receive({ type: 'participants.snapshot', data: {} });
+  get query(): URLSearchParams {
+    return new URL(this.url).searchParams;
   }
 
+  /** The server accepts the connection. Neither socket sends a ready message. */
   open(): void {
     this.readyState = FakeSocket.OPEN;
     this.onopen?.(new Event('open'));
@@ -168,7 +177,16 @@ async function fakeFetch(url: string, init: RequestInit): Promise<Response> {
   const { pathname } = new URL(url);
   server.requests.push(`${init.method} ${pathname}`);
   timeline.push(`${init.method} ${pathname}`);
-  if (pathname === '/conversations') return reply(200, { conversation_id: 'conversation-1' });
+  if (pathname === '/v1/conversations') return reply(201, { conversation_id: 'conversation-1' });
+  if (pathname === TOKEN_PATH) {
+    const status = server.tokenReplies.shift() ?? 201;
+    if (status === NETWORK_FAILURE) throw new TypeError('Failed to fetch');
+    // This route answers without the common envelope.
+    const body = status === 201
+      ? { access_token: `token-${server.tokensIssued += 1}`, expires_at_ms: Date.now() + TOKEN_LIFETIME_MS }
+      : { detail: `Token refused with ${status}.` };
+    return { ok: status < 300, status, text: async () => JSON.stringify(body) } as Response;
+  }
   if (pathname === END_PATH) {
     if (server.endHangs) {
       // The request ends only when the client gives it up.
@@ -194,25 +212,32 @@ function systemError(code: number, reason: string, message: string, data: object
   return { type: 'system.error', statusCode: String(code), message: [message], data: { reason, ...data } };
 }
 
+/** A result message with one item. A preview carries `order_seq` in `data`, a final in the item. */
 function result(eventType: string, orderSeq: number, text: string, targetLanguage: string | null = null) {
+  const isTranscript = eventType.startsWith('transcript.');
+  const isFinal = eventType.endsWith('.final');
+  const item = {
+    ...(isFinal ? { order_seq: orderSeq } : {}),
+    [isTranscript ? 'transcript' : 'translation']: text,
+    source_language: 'ko-KR',
+    ...(isTranscript ? {} : { target_language: targetLanguage }),
+    speaker_id: '1',
+    start_ms: 0,
+    end_ms: 480,
+  };
   return {
-    type: 'result',
-    statusCode: '200',
-    message: ['ok'],
+    type: eventType,
     data: {
       conversation_id: 'conversation-1',
-      event_type: eventType,
-      order_seq: orderSeq,
-      text,
-      source_language: 'ko-KR',
-      target_language: targetLanguage,
+      ...(isFinal ? {} : { order_seq: orderSeq }),
+      [isTranscript ? 'utterances' : 'translations']: [item],
     },
   };
 }
 
 function createSession() {
   const microphone = new FakeMicrophone();
-  const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
+  const session = new RealtimeTranslationSession(endpoints, microphone, 'api-key');
   return { session, microphone };
 }
 
@@ -226,6 +251,7 @@ async function startSession(clientVad = false) {
 /** Runs everything that is ready to run without moving the clock. */
 const flush = () => vi.advanceTimersByTimeAsync(0);
 const endRequests = () => server.requests.filter((request) => request === `POST ${END_PATH}`);
+const tokenRequests = () => server.requests.filter((request) => request === `POST ${TOKEN_PATH}`);
 const socketKinds = () => FakeSocket.instances.map((socket) => socket.kind);
 const latest = () => FakeSocket.instances.at(-1)!;
 
@@ -249,9 +275,11 @@ beforeEach(() => {
     sendsEnded: true,
     endGate: Promise.resolve(),
     endHangs: false,
+    tokenReplies: [],
+    tokensIssued: 0,
   });
   FakeSocket.instances = [];
-  FakeSocket.onConnect = (socket) => socket.accept();
+  FakeSocket.onConnect = (socket) => socket.open();
   vi.stubGlobal('fetch', fakeFetch);
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('window', {
@@ -269,6 +297,101 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe('RealtimeTranslationSession access tokens', () => {
+  it('creates, saves settings, issues one token, and opens both /v1 sockets with it', async () => {
+    const { resultSocket, audioSocket } = await startSession();
+    expect(server.requests).toEqual([
+      'POST /v1/conversations',
+      'POST /v1/conversations/conversation-1/settings',
+      `POST ${TOKEN_PATH}`,
+    ]);
+    expect(resultSocket.url).toBe('wss://example.test/v1/conversations/conversation-1/results?token=token-1');
+    expect(audioSocket.url).toBe(
+      'wss://example.test/v1/audio?conversation_id=conversation-1&audio_format=opus&token=token-1',
+    );
+    // The API key never goes into a WebSocket URL.
+    expect(FakeSocket.instances.some((socket) => socket.url.includes('api-key'))).toBe(false);
+  });
+
+  it('sends the API key on REST calls and names the Conversation when asking for a token', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    await startSession();
+    const tokenCall = fetchSpy.mock.calls.find(([url]) => String(url).endsWith(TOKEN_PATH));
+    expect(JSON.parse(String(tokenCall?.[1]?.body))).toEqual({
+      session_kind: 'conversation',
+      session_id: 'conversation-1',
+    });
+    for (const [, init] of fetchSpy.mock.calls) {
+      expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer api-key');
+    }
+  });
+
+  it('reuses the token for a reconnect and for an engine renewal while it is valid', async () => {
+    const { microphone, audioSocket } = await startSession();
+    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    await expect(microphone.getAccessToken?.()).resolves.toBe('token-1');
+    audioSocket.serverClose(1006);
+    expect((await reopenedAfter(1_000)).query.get('token')).toBe('token-1');
+    expect(tokenRequests()).toHaveLength(1);
+  });
+
+  it('issues a new token for a reconnect and for an engine renewal once the first is about to expire', async () => {
+    const { session, microphone, audioSocket } = await startSession();
+    await vi.advanceTimersByTimeAsync(TOKEN_LIFETIME_MS - 60_000);
+    await expect(microphone.getAccessToken?.()).resolves.toBe('token-2');
+    await vi.advanceTimersByTimeAsync(TOKEN_LIFETIME_MS);
+    audioSocket.serverClose(1006);
+    expect((await reopenedAfter(1_000)).query.get('token')).toBe('token-3');
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
+  });
+
+  it('fails the start and ends the Conversation when no token is issued', async () => {
+    server.tokenReplies = [401];
+    const { session } = createSession();
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'Token refused with 401.' });
+    expect(FakeSocket.instances).toEqual([]);
+    expect(endRequests()).toHaveLength(1);
+  });
+
+  describe('when the token for a reconnect cannot be issued', () => {
+    async function reconnectWithExpiredToken(...replies: typeof server.tokenReplies) {
+      const started = await startSession();
+      await vi.advanceTimersByTimeAsync(TOKEN_LIFETIME_MS);
+      server.tokenReplies = replies;
+      started.audioSocket.serverClose(1006);
+      await vi.advanceTimersByTimeAsync(1_000);
+      return started;
+    }
+
+    it.each([404, 410])('shows the Conversation as ended, without POST /end, after %i', async (status) => {
+      const { session } = await reconnectWithExpiredToken(status);
+      expect(session.getSnapshot()).toMatchObject(ENDED_BY_SERVER);
+      expect(endRequests()).toEqual([]);
+      expect(socketKinds()).toEqual(['result', 'audio']);
+    });
+
+    it('stops with the server message after 401', async () => {
+      const { session } = await reconnectWithExpiredToken(401);
+      expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'Token refused with 401.' });
+      expect(endRequests()).toHaveLength(1);
+    });
+
+    it('keeps reconnecting with backoff when the request gets no response', async () => {
+      // The request itself is repeated after 1, 2, and 5 seconds before the attempt gives up.
+      const failures = Array<typeof NETWORK_FAILURE>(4).fill(NETWORK_FAILURE);
+      const { session } = await reconnectWithExpiredToken(...failures);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', error: null });
+      expect(socketKinds()).toEqual(['result', 'audio']);
+
+      await reopenedAfter(2_000);
+      expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
+    });
+  });
 });
 
 describe('RealtimeTranslationSession when the Conversation ends on the server', () => {
@@ -365,6 +488,36 @@ describe('RealtimeTranslationSession when the server refuses a socket', () => {
   });
 });
 
+describe('RealtimeTranslationSession when the server refuses a socket for this client', () => {
+  it('stops but leaves the Conversation open after 1008 results_connection_replaced', async () => {
+    const { session, resultSocket } = await startSession();
+    resultSocket.receive(systemError(1008, 'results_connection_replaced', 'Results connection replaced.'));
+    resultSocket.serverClose(1008, 'results_connection_replaced');
+    await flush();
+
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'error',
+      error: 'Another device or tab took over the results of this Conversation.',
+    });
+    expect(endRequests()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(socketKinds()).toEqual(['result', 'audio']);
+  });
+
+  it.each(['result', 'audio'] as const)('stops without reconnecting when %s closes with 4401', async (kind) => {
+    const { session, resultSocket, audioSocket } = await startSession();
+    (kind === 'result' ? resultSocket : audioSocket).serverClose(4401, 'API key expired');
+    await flush();
+
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'error',
+      error: 'The server no longer accepts the API key. (API key expired)',
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(socketKinds()).toEqual(['result', 'audio']);
+  });
+});
+
 describe('RealtimeTranslationSession when a failure ends the session', () => {
   it('shows the error before POST /end has answered, and stop() waits for that POST /end', async () => {
     const { session, audioSocket } = await startSession();
@@ -419,7 +572,7 @@ describe('RealtimeTranslationSession when a failure ends the session', () => {
 describe('RealtimeTranslationSession when a Result message is malformed', () => {
   it('shows the error and keeps the session running', async () => {
     const { session, microphone, resultSocket, audioSocket } = await startSession();
-    resultSocket.receive({ type: 'result', data: { event_type: 'transcript.final' } });
+    resultSocket.receive({ type: 'transcript.final', data: { conversation_id: 'conversation-1' } });
     await flush();
 
     expect(session.getSnapshot()).toMatchObject({
@@ -481,9 +634,13 @@ describe('RealtimeTranslationSession reconnects', () => {
     await reopenedAfter(2_000);
   });
 
-  it('keeps sending audio while only Result reconnects, and shows only later results', async () => {
+  it('keeps sending audio while only Result reconnects, and asks for the finals it has not handled', async () => {
     const { session, microphone, resultSocket, audioSocket } = await startSession();
+    expect(resultSocket.query.has('after_order_seq')).toBe(false);
     resultSocket.receive(result('transcript.final', 0, '안녕하세요.'));
+    resultSocket.receive(result('translation.final', 0, 'Hello.', 'en-US'));
+    // The translation of this one was not received before the close.
+    resultSocket.receive(result('transcript.final', 1, '반갑습니다.'));
     resultSocket.serverClose(1013, 'result_send_failed');
     await flush();
     expect(session.getSnapshot()).toMatchObject({
@@ -504,13 +661,18 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(audioSocket.detached).toBe(false);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', resultConnection: 'open' });
 
-    // What the server sent during the gap is not recovered: the earlier row stays as it was.
+    // Row 0 is complete, so the server sends the stored finals after it again, then live results.
+    expect(reopened.query.get('after_order_seq')).toBe('0');
+    reopened.receive(result('transcript.final', 1, '반갑습니다.'));
+    reopened.receive(result('translation.final', 1, 'Nice to meet you.', 'en-US'));
     reopened.receive(result('transcript.final', 2, '다시 연결됐습니다.'));
     await vi.advanceTimersByTimeAsync(10_000);
     expect(session.getSnapshot().rows).toMatchObject([
-      { orderSeq: 0, source: { text: '안녕하세요.', isFinal: true }, translations: {} },
+      { orderSeq: 0, source: { text: '안녕하세요.', isFinal: true } },
+      { orderSeq: 1, source: { text: '반갑습니다.', isFinal: true }, translations: { 'en-US': { text: 'Nice to meet you.' } } },
       { orderSeq: 2, source: { text: '다시 연결됐습니다.', isFinal: true } },
     ]);
+    // The token of the first connection is still valid, so nothing was requested.
     expect(server.requests).toEqual(requestsBeforeReconnect);
 
     microphone.emit();
@@ -518,7 +680,7 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(audioSocket.sent.filter((item) => item instanceof ArrayBuffer)).toHaveLength(2);
   });
 
-  it('opens Result first when both sockets closed, and /audio only after Result is ready', async () => {
+  it('opens Result first when both sockets closed, and /audio only after Result is open', async () => {
     const { session, resultSocket, audioSocket } = await startSession();
     FakeSocket.onConnect = () => {};
     resultSocket.serverClose(1006);
@@ -531,16 +693,15 @@ describe('RealtimeTranslationSession reconnects', () => {
     });
 
     const reopenedResult = await reopenedAfter(1_000);
-    reopenedResult.open();
-    await flush();
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(socketKinds()).toEqual(['result', 'audio', 'result']);
 
-    reopenedResult.receive({ type: 'participants.snapshot', data: {} });
+    reopenedResult.open();
     await flush();
     expect(socketKinds()).toEqual(['result', 'audio', 'result', 'audio']);
     expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', resultConnection: 'open' });
 
-    latest().accept();
+    latest().open();
     await flush();
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
   });
@@ -569,12 +730,12 @@ describe('RealtimeTranslationSession reconnects', () => {
       systemError(1013, reason, 'Audio pipeline reconnect rate limit exceeded.', { retry_after_ms: 3_000 }),
     );
     audioSocket.serverClose(1013, reason);
-    reopenedResult.accept();
+    reopenedResult.open();
     await flush();
     expect(socketKinds()).toEqual(['result', 'audio', 'result']);
     expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', resultConnection: 'open' });
 
-    (await reopenedAfter(3_000)).accept();
+    (await reopenedAfter(3_000)).open();
     await flush();
     expect(socketKinds()).toEqual(['result', 'audio', 'result', 'audio']);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
@@ -591,9 +752,9 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(socketKinds()).toEqual(['result', 'audio', 'result']);
     expect(opening.detached).toBe(false);
 
-    opening.accept();
+    opening.open();
     await flush();
-    latest().accept();
+    latest().open();
     await flush();
     expect(socketKinds()).toEqual(['result', 'audio', 'result', 'audio']);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
@@ -603,7 +764,7 @@ describe('RealtimeTranslationSession reconnects', () => {
     const { session, microphone, audioSocket } = await startSession();
     const reason = 'audio_pipeline_activation_rate_limited';
     FakeSocket.onConnect = (socket) => {
-      socket.accept();
+      socket.open();
       socket.receive(
         systemError(1013, reason, 'Audio pipeline reconnect rate limit exceeded.', { retry_after_ms: 800 }),
       );
@@ -618,7 +779,7 @@ describe('RealtimeTranslationSession reconnects', () => {
     });
     expect(microphone.capturing).toBe(false);
 
-    FakeSocket.onConnect = (socket) => socket.accept();
+    FakeSocket.onConnect = (socket) => socket.open();
     await reopenedAfter(2_000);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
     expect(microphone.capturing).toBe(true);
@@ -680,7 +841,7 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(stalled.detached).toBe(true);
     expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', audioConnection: 'closed' });
 
-    FakeSocket.onConnect = (socket) => socket.accept();
+    FakeSocket.onConnect = (socket) => socket.open();
     await reopenedAfter(2_000);
     stalled.serverClose(1008, 'audio_pipeline_fenced');
     await flush();
@@ -813,7 +974,7 @@ describe('RealtimeTranslationSession while starting', () => {
 
   it('fails the start with the server message when /audio is accepted and then refused', async () => {
     FakeSocket.onConnect = (socket) => {
-      socket.accept();
+      socket.open();
       if (socket.kind !== 'audio') return;
       socket.receive(
         systemError(1008, 'interpretation_settings_not_found', 'Interpretation settings were not found.'),
@@ -838,7 +999,7 @@ describe('RealtimeTranslationSession while starting', () => {
 
   it('fails the start instead of reconnecting when Result closes while /audio is opening', async () => {
     FakeSocket.onConnect = (socket) => {
-      if (socket.kind === 'result') socket.accept();
+      if (socket.kind === 'result') socket.open();
       else FakeSocket.instances[0]!.serverClose(1011, 'internal_error');
     };
     const { session } = createSession();
@@ -873,12 +1034,12 @@ describe('RealtimeTranslationSession while starting', () => {
     expect(socketKinds()).toEqual(['result']);
   });
 
-  it('fails the start when Result does not become ready within 10 seconds', async () => {
-    FakeSocket.onConnect = (socket) => socket.open();
+  it('fails the start when Result does not open within 10 seconds', async () => {
+    FakeSocket.onConnect = () => {};
     const { session } = createSession();
     const started = start(session);
     await vi.advanceTimersByTimeAsync(9_999);
-    expect(session.getSnapshot()).toMatchObject({ phase: 'connecting', resultConnection: 'open' });
+    expect(session.getSnapshot()).toMatchObject({ phase: 'connecting', resultConnection: 'connecting' });
     await vi.advanceTimersByTimeAsync(1);
     await started;
 
@@ -1032,7 +1193,7 @@ describe('Audio SDK requirement', () => {
     await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
     expect(prepare).toHaveBeenCalledWith(false);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioSdkReady: true, vad: { enabled: false, mode: 'disabled' } });
-    const settingsCall = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/interpretation-settings'));
+    const settingsCall = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/settings'));
     expect(JSON.parse(String(settingsCall?.[1]?.body)).transcription.client_vad).toBe(false);
     await session.stop();
     expect(session.getSnapshot().audioSdkReady).toBe(false);
@@ -1065,7 +1226,7 @@ describe('disabled SDK configuration', () => {
   it('fails before preparing capture or creating a conversation', async () => {
     const microphone = new FakeMicrophone();
     const prepare = vi.spyOn(microphone, 'prepare');
-    const session = new RealtimeTranslationSession({ ...endpoints, audioSdkEnabled: false }, microphone, 'token');
+    const session = new RealtimeTranslationSession({ ...endpoints, audioSdkEnabled: false }, microphone, 'api-key');
     await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
     await flush();
     expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: 'Audio SDK is required. Enable audio-sdk before starting a session.' });

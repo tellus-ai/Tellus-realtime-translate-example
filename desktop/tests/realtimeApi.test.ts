@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RealtimeApiError, createRealtimeApi, toDesktopError } from '../electron/realtimeApi';
 
-const config = { httpBaseUrl: 'https://api.example.test', accessToken: 'token-1' };
+const config = { httpBaseUrl: 'https://api.example.test', apiKey: 'key-1' };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
 describe('createRealtimeApi', () => {
-  it('creates a conversation with the bearer token and unwraps the envelope', async () => {
+  it('creates a conversation with the API key, without a request body, and unwraps the envelope', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({
       statusCode: '201',
       message: ['ok'],
@@ -18,27 +18,24 @@ describe('createRealtimeApi', () => {
 
     await expect(api.createConversation()).resolves.toBe('conversation-1');
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('https://api.example.test/conversations');
+    expect(url).toBe('https://api.example.test/v1/conversations');
     expect(init.method).toBe('POST');
-    expect(init.headers).toMatchObject({ Authorization: 'Bearer token-1' });
-    expect(JSON.parse(String(init.body))).toEqual({
-      max_concurrent_viewers: 10,
-      conversation_audio_mode: 'single_speaker',
-    });
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer key-1' });
+    // The settings are saved by the next call.
+    expect(init.body).toBeUndefined();
   });
 
-  it('saves interpretation settings with the client VAD flag and default translation', async () => {
+  it('saves the two languages and the client VAD flag as settings', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ statusCode: '200', message: ['ok'], data: {} }));
     const api = createRealtimeApi(config, fetchMock);
 
     await api.saveInterpretationSettings('a/b', { sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('https://api.example.test/conversations/a%2Fb/interpretation-settings');
+    expect(url).toBe('https://api.example.test/v1/conversations/a%2Fb/settings');
     expect(JSON.parse(String(init.body))).toEqual({
       languages: ['ko-KR', 'en-US'],
       transcription: { client_vad: true },
-      translation: {},
     });
   });
 
@@ -49,7 +46,7 @@ describe('createRealtimeApi', () => {
     await api.endConversation('conversation-1');
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('https://api.example.test/conversations/conversation-1/end');
+    expect(url).toBe('https://api.example.test/v1/conversations/conversation-1/end');
     expect(init.body).toBeUndefined();
   });
 
@@ -63,7 +60,7 @@ describe('createRealtimeApi', () => {
 
   it('rejects without a request when API_KEY is missing', async () => {
     const fetchMock = vi.fn();
-    const api = createRealtimeApi({ ...config, accessToken: '' }, fetchMock);
+    const api = createRealtimeApi({ ...config, apiKey: '' }, fetchMock);
 
     await expect(api.createConversation()).rejects.toThrow('Set API_KEY in desktop/.env');
     expect(fetchMock).not.toHaveBeenCalled();
@@ -113,7 +110,7 @@ describe('createRealtimeApi retries', () => {
     it.each([200, 410, 404])('treats %i as ended', async (status) => {
       replies = [{ status, body: { message: ['Conversation has already ended.'] } }];
       expect(await settle(api.endConversation('c1'))).toEqual({ value: undefined });
-      expect(requests).toEqual(['POST /conversations/c1/end']);
+      expect(requests).toEqual(['POST /v1/conversations/c1/end']);
     });
 
     it('calls again after 503 and after a network failure, waiting 1, 2, and 5 seconds', async () => {

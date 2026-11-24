@@ -73,18 +73,19 @@ function startApp(): void {
   // Values already set in the process environment take precedence.
   const envFile = app.isPackaged ? join(__dirname, '../runtime.env') : join(app.getAppPath(), '.env');
   const config = resolveRealtimeSpeechConfig({ ...readEnvFile(envFile), ...process.env });
-  const getAccessToken = () => resolveRealtimeSpeechConfig({ ...readEnvFile(envFile), ...process.env }).accessToken;
+  const getApiKey = () => resolveRealtimeSpeechConfig({ ...readEnvFile(envFile), ...process.env }).apiKey;
   const api = createRealtimeApi({
     httpBaseUrl: config.httpBaseUrl,
-    get accessToken() { return getAccessToken(); },
+    get apiKey() { return getApiKey(); },
   }, (url, init) => net.fetch(url, init));
   // REST and both WebSockets run here without an Origin header, like other native clients.
-  // The session opens its WebSockets with the `ws` package (realtime/nodeWebSocket.ts).
+  // The session opens its WebSockets with the `ws` package (realtime/nodeWebSocket.ts) and sends
+  // the API key in their Authorization header. The key never reaches the renderer.
   realtimeSession = new RealtimeTranslationSession(
     { websocketBaseUrl: config.websocketBaseUrl, audioSdkEnabled: config.audioSdkEnabled },
     api,
     (denoiseEnabled) => createMicrophoneCapture(requestMicrophoneAccess, denoiseEnabled),
-    getAccessToken,
+    getApiKey,
   );
   realtimeSession.subscribe((snapshot) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(SNAPSHOT_CHANNEL, snapshot);
@@ -100,7 +101,7 @@ function startApp(): void {
     saveRecording: (recording) => downloadRecording(app.getPath('home'), recording),
     isTrustedSender: (event) => isTrustedIpcSender(event, isTrusted),
   });
-  mainWindow = createMainWindow({ accessTokenConfigured: Boolean(config.accessToken), audioSdkEnabled: config.audioSdkEnabled });
+  mainWindow = createMainWindow({ apiKeyConfigured: Boolean(config.apiKey), audioSdkEnabled: config.audioSdkEnabled });
   // Load the native engine in the background so the first Start is fast.
   // A failure here is reported again when the user presses Start.
   if (config.audioSdkEnabled) initializeAudioEngine().then(

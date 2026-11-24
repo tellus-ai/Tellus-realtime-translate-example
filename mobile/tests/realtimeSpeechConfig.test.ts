@@ -37,13 +37,13 @@ function resolveAppSettings(environment: Record<string, string> = {}) {
 
 it('passes the existing dotenv variable names through Expo config to the app', () => {
   expect(resolveAppSettings({
-    API_KEY: ' fixture-access-token ',
+    API_KEY: ' fixture-api-key ',
     REALTIME_SPEECH_HTTP_URL: ' https://http.fixture.test/// ',
     REALTIME_SPEECH_WS_URL: ' wss://socket.fixture.test/ ',
     APP_ORIGIN: ' https://app.fixture.test/ ',
   })).toEqual({
     audioSdkEnabled: true,
-    accessToken: 'fixture-access-token',
+    apiKey: 'fixture-api-key',
     httpBaseUrl: 'https://http.fixture.test',
     websocketBaseUrl: 'wss://socket.fixture.test',
     appOrigin: 'https://app.fixture.test',
@@ -84,7 +84,7 @@ it('keeps the defaults when the settings are missing or blank', () => {
     APP_ORIGIN: ' ',
   })).toEqual({
     audioSdkEnabled: true,
-    accessToken: '',
+    apiKey: '',
     httpBaseUrl: 'https://public.speech.tellus.ai.kr',
     websocketBaseUrl: 'wss://public.speech.tellus.ai.kr',
     appOrigin: 'https://devapp.tellus.ai.kr',

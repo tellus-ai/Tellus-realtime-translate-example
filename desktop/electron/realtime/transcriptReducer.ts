@@ -12,6 +12,14 @@ export function applyResultEvent(
   event: ResultEvent,
 ): TranslationRow[] {
   const existing = rows.find((row) => row.orderSeq === event.orderSeq);
+  const isFinal = event.eventType.endsWith('.final');
+  const isTranscript = event.eventType.startsWith('transcript.');
+  const current = isTranscript
+    ? existing?.source
+    : event.targetLanguage ? existing?.translations[event.targetLanguage] : undefined;
+  // A final stands: a preview of the same `order_seq` that arrives after it is out of date.
+  if ((!isTranscript && !event.targetLanguage) || (current?.isFinal && !isFinal)) return [...rows];
+
   const row: TranslationRow = existing
     ? { ...existing, translations: { ...existing.translations } }
     : {
@@ -20,24 +28,15 @@ export function applyResultEvent(
         source: null,
         translations: {},
       };
-  const isFinal = event.eventType.endsWith('.final');
-
-  if (event.eventType.startsWith('transcript.')) {
+  const text = {
+    text: !isFinal && current ? mergePreview(current.text, event.text) : event.text,
+    isFinal,
+  };
+  if (isTranscript) {
     row.sourceLanguage = event.sourceLanguage;
-    row.source = {
-      text: !isFinal && row.source && !row.source.isFinal
-        ? mergePreview(row.source.text, event.text)
-        : event.text,
-      isFinal,
-    };
-  } else if (event.targetLanguage) {
-    const current = row.translations[event.targetLanguage];
-    row.translations[event.targetLanguage] = {
-      text: !isFinal && current && !current.isFinal
-        ? mergePreview(current.text, event.text)
-        : event.text,
-      isFinal,
-    };
+    row.source = text;
+  } else {
+    row.translations[event.targetLanguage!] = text;
   }
 
   return [...rows.filter((item) => item.orderSeq !== event.orderSeq), row].sort(
@@ -49,4 +48,18 @@ export function applyResultEvent(
 export function awaitsFinal(row: TranslationRow): boolean {
   const translations = Object.values(row.translations);
   return !row.source?.isFinal || translations.length === 0 || translations.some((item) => !item.isFinal);
+}
+
+/**
+ * The `after_order_seq` of a new Result WebSocket: the last `order_seq` up to which every row has
+ * its final transcript and its final translation. The server sends the finals stored after it
+ * again, so a final missed while the socket was closed still arrives. Null when there is none yet.
+ */
+export function lastCompleteOrderSeq(rows: readonly TranslationRow[]): number | null {
+  let last: number | null = null;
+  for (const row of rows) {
+    if (awaitsFinal(row)) break;
+    last = row.orderSeq;
+  }
+  return last;
 }

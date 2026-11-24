@@ -25,7 +25,7 @@ document.querySelector('#run').onclick = async () => {
     try { await capture.start(() => {}); } catch (error) { refused = error.message === 'engine_authorization_required'; }
     check('start_requires_native_permit', refused);
     check('no_microphone_before_permit', window.micRequests.length === 0);
-    socket = new WebSocket(location.origin.replace('http:', 'ws:') + '/audio?conversation_id=conversation-1&audio_format=opus');
+    socket = new WebSocket(location.origin.replace('http:', 'ws:') + '/v1/audio?conversation_id=conversation-1&audio_format=opus&token=test-access-token');
     authorization = attachEngineAuthorization(socket, capture, { conversationId: 'conversation-1', getAccessToken: () => 'test-access-token', onError: (error) => probe.errors.push(error.message) });
     await authorization.ready;
     const loaded = await capture.getStatus();

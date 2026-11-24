@@ -13,10 +13,10 @@ export interface StartConversationInput {
   clientVad: boolean;
 }
 
-export async function createConversation(endpoints: RealtimeEndpoints, accessToken: string): Promise<string> {
+export async function createConversation(endpoints: RealtimeEndpoints, apiKey: string): Promise<string> {
+  // No body: the settings are saved by the next call.
   const response = await requestJson<{ conversation_id: string }>(
-    `${endpoints.httpBaseUrl}/conversations`, accessToken,
-    { method: 'POST', body: JSON.stringify({ max_concurrent_viewers: 10, conversation_audio_mode: 'single_speaker' }) },
+    `${endpoints.httpBaseUrl}/v1/conversations`, apiKey, { method: 'POST' },
   );
   if (!response.conversation_id) throw new Error('Conversation response is missing conversation_id.');
   return response.conversation_id;
@@ -24,29 +24,29 @@ export async function createConversation(endpoints: RealtimeEndpoints, accessTok
 
 export async function saveInterpretationSettings(
   endpoints: RealtimeEndpoints,
-  accessToken: string,
+  apiKey: string,
   conversationId: string,
   sourceLanguage: string,
   targetLanguage: string,
   clientVad: boolean,
 ): Promise<void> {
   await requestJson(
-    `${endpoints.httpBaseUrl}/conversations/${encodeURIComponent(conversationId)}/interpretation-settings`,
-    accessToken,
-    { method: 'POST', body: JSON.stringify({ languages: [sourceLanguage, targetLanguage], transcription: { client_vad: clientVad }, translation: {} }) },
+    `${endpoints.httpBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/settings`,
+    apiKey,
+    { method: 'POST', body: JSON.stringify({ languages: [sourceLanguage, targetLanguage], transcription: { client_vad: clientVad } }) },
   );
 }
 
 /** Resolves once the Conversation is over, whether or not this call was the one that ended it. */
 export async function endConversation(
   endpoints: RealtimeEndpoints,
-  accessToken: string,
+  apiKey: string,
   conversationId: string,
 ): Promise<void> {
   try {
     await requestJson(
-      `${endpoints.httpBaseUrl}/conversations/${encodeURIComponent(conversationId)}/end`,
-      accessToken,
+      `${endpoints.httpBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/end`,
+      apiKey,
       { method: 'POST' },
       { retryNetworkFailure: true },
     );
@@ -57,10 +57,24 @@ export async function endConversation(
   }
 }
 
-export function buildResultWebSocketUrl(endpoints: RealtimeEndpoints, conversationId: string): string {
-  return `${endpoints.websocketBaseUrl}/conversations/${encodeURIComponent(conversationId)}/results`;
+/**
+ * `afterOrderSeq` is the last `order_seq` this client has handled in full. On connect the server
+ * first sends the finals stored after it; without it, every stored final.
+ */
+export function buildResultWebSocketUrl(endpoints: RealtimeEndpoints, conversationId: string, afterOrderSeq: number | null = null): string {
+  const url = `${endpoints.websocketBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/results`;
+  return afterOrderSeq === null ? url : `${url}?after_order_seq=${afterOrderSeq}`;
 }
 
 export function buildAudioWebSocketUrl(endpoints: RealtimeEndpoints, conversationId: string): string {
-  return `${endpoints.websocketBaseUrl}/audio?conversation_id=${encodeURIComponent(conversationId)}&audio_format=opus`;
+  return `${endpoints.websocketBaseUrl}/v1/audio?conversation_id=${encodeURIComponent(conversationId)}&audio_format=opus`;
+}
+
+/**
+ * The handshake headers of both WebSockets. React Native can set them, so the app sends the API
+ * key here. The server refuses a key in the URL, and a browser, which cannot set WebSocket
+ * headers, connects with an access token from `POST /v1/access-tokens` instead.
+ */
+export function buildWebSocketHeaders(endpoints: RealtimeEndpoints, apiKey: string): Record<string, string> {
+  return { Origin: endpoints.appOrigin, Authorization: `Bearer ${apiKey.trim()}` };
 }

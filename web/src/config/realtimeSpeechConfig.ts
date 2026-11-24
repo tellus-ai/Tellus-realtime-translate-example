@@ -7,7 +7,7 @@ function trimTrailingSlash(value: string): string {
 
 export const realtimeSpeechConfig = {
   audioSdkEnabled: import.meta.env.VITE_TELLUS_AUDIO_SDK_ENABLED?.trim() !== 'false',
-  accessToken: import.meta.env.VITE_ACCESS_TOKEN?.trim() ?? '',
+  apiKey: import.meta.env.VITE_API_KEY?.trim() ?? '',
   httpBaseUrl: trimTrailingSlash(
     import.meta.env.VITE_REALTIME_SPEECH_HTTP_URL || DEFAULT_HTTP_URL,
   ),

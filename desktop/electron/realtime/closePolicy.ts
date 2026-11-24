@@ -11,7 +11,7 @@ export interface SystemError {
   reason: string | null;
   /** `message[0]`, for display. */
   message: string;
-  /** `data.retry_after_ms`, sent with the `/audio` reconnect rate limit. */
+  /** `data.retry_after_ms`, sent with the `/v1/audio` reconnect rate limit. */
   retryAfterMs: number | null;
 }
 
@@ -38,10 +38,19 @@ export const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 // reset the backoff.
 export const STABLE_CONNECTION_MS = 30_000;
 
-// The `engine_*` reasons belong to the native engine authorization on `/audio`.
+// The `engine_*` reasons belong to the native engine authorization on `/v1/audio`.
 const ENDED_REASONS = new Set(['conversation_ended', 'conversation_not_found', 'engine_conversation_inactive']);
-const REPLACED_REASONS = new Set(['audio_connection_replaced', 'engine_connection_superseded']);
+// A newer connection for the same Conversation took over this socket.
+const AUDIO_REPLACED_MESSAGE = 'Another device or tab took over the audio of this Conversation.';
+const REPLACED_MESSAGES = new Map([
+  ['audio_connection_replaced', AUDIO_REPLACED_MESSAGE],
+  ['engine_connection_superseded', AUDIO_REPLACED_MESSAGE],
+  ['results_connection_replaced', 'Another device or tab took over the results of this Conversation.'],
+]);
 const AUTHORIZATION_EXPIRED_REASON = 'engine_authorization_expired';
+// The server rechecks the API key while a socket is open and closes it with this code once the
+// key is revoked, expired, or changes scope. No `system.error` precedes it.
+const API_KEY_REJECTED_CODE = 4401;
 
 export function reconnectDelayMs(attempt: number): number {
   return RECONNECT_DELAYS_MS[Math.min(Math.max(attempt, 0), RECONNECT_DELAYS_MS.length - 1)];
@@ -53,19 +62,29 @@ export function decideSocketClose(close: SocketClose): CloseDecision {
   if (close.code === 1000) return { action: 'ended', reason };
 
   // The only 1008 that a reconnect repairs: the engine permit ran out before it was renewed,
-  // and a new `/audio` socket is authorized from the start.
+  // and a new `/v1/audio` socket is authorized from the start.
   if (close.code === 1008 && reason !== AUTHORIZATION_EXPIRED_REASON) {
     if (reason !== null && ENDED_REASONS.has(reason)) return { action: 'ended', reason };
-    if (reason !== null && REPLACED_REASONS.has(reason)) {
+    const replaced = reason === null ? undefined : REPLACED_MESSAGES.get(reason);
+    if (replaced) {
       return {
         action: 'fail',
         reason,
-        message: 'Another device or tab took over the audio of this Conversation.',
+        message: replaced,
         // The Conversation is still in use there, so this client leaves it open.
         endConversation: false,
       };
     }
     return { action: 'fail', reason, message: describeRejection(close, reason), endConversation: true };
+  }
+
+  if (close.code === API_KEY_REJECTED_CODE) {
+    return {
+      action: 'fail',
+      reason,
+      message: `The server no longer accepts the API key. (${reason ?? close.code})`,
+      endConversation: true,
+    };
   }
 
   // 1012 is a server restart: spread the first reconnect so clients do not return at once.

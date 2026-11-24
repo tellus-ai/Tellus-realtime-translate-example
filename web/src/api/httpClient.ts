@@ -25,7 +25,9 @@ function readMessages(value: unknown): string[] {
   if (Array.isArray(value.message)) {
     return value.message.filter((item): item is string => typeof item === 'string');
   }
-  return typeof value.message === 'string' ? [value.message] : [];
+  if (typeof value.message === 'string') return [value.message];
+  // `POST /v1/access-tokens` reports an error as `{"detail": "<text>"}`.
+  return typeof value.detail === 'string' ? [value.detail] : [];
 }
 
 function unwrapEnvelope<T>(value: unknown): T {
@@ -51,13 +53,13 @@ export interface RequestOptions {
 /** Sends the request again after a 503, up to three more times. Other statuses are not retried. */
 export async function requestJson<T>(
   url: string,
-  accessToken: string,
+  apiKey: string,
   init: RequestInit,
   { retryNetworkFailure = false }: RequestOptions = {},
 ): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await requestOnce<T>(url, accessToken, init);
+      return await requestOnce<T>(url, apiKey, init);
     } catch (error) {
       const status = error instanceof RealtimeApiError ? error.status : undefined;
       const temporary = status === 503 || (status === null && retryNetworkFailure);
@@ -69,7 +71,7 @@ export async function requestJson<T>(
 
 async function requestOnce<T>(
   url: string,
-  accessToken: string,
+  apiKey: string,
   init: RequestInit,
 ): Promise<T> {
   // Without a time limit a request can stay pending forever, and Stop waits for `POST /end`.
@@ -86,7 +88,7 @@ async function requestOnce<T>(
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken.trim()}`,
+        Authorization: `Bearer ${apiKey.trim()}`,
         ...init.headers,
       },
     });

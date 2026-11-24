@@ -68,7 +68,7 @@ describe('createNodeWebSocket', () => {
       acceptUpgrade(request.headers, socket);
       socket.end(errorCloseFrames(SYSTEM_ERROR, 1008, 'conversation_not_found'));
     });
-    const socket = createNodeWebSocket(await listen(server));
+    const socket = createNodeWebSocket(await listen(server), 'api-key');
     const messages: unknown[] = [];
     socket.onmessage = (event) => messages.push(event.data);
     const closed = await new Promise<{ code: number; reason: string }>((resolve) => {
@@ -79,7 +79,7 @@ describe('createNodeWebSocket', () => {
     expect(closed).toMatchObject({ code: 1008, reason: 'conversation_not_found' });
   });
 
-  it('sends no Origin header, delivers text as strings, and calls listeners in the order they were added', async () => {
+  it('sends the API key in the Authorization header and no Origin header, delivers text as strings, and calls listeners in the order they were added', async () => {
     const headers: IncomingHttpHeaders[] = [];
     const received: Array<{ data: string; isBinary: boolean }> = [];
     const http = createServer();
@@ -91,7 +91,9 @@ describe('createNodeWebSocket', () => {
         if (received.length === 2) client.send('{"type":"engine.authorized"}');
       });
     });
-    const socket = createNodeWebSocket(await listen(http));
+    const urls: Array<string | undefined> = [];
+    wss.on('connection', (_client, request) => urls.push(request.url));
+    const socket = createNodeWebSocket(`${await listen(http)}/v1/audio?conversation_id=c1&audio_format=opus`, 'api-key');
     expect(socket.readyState).toBe(0);
     const calls: string[] = [];
     await new Promise((resolve) => { socket.onopen = resolve; });
@@ -110,6 +112,9 @@ describe('createNodeWebSocket', () => {
     await answered;
 
     expect(headers[0]).not.toHaveProperty('origin');
+    // The server refuses a key in the URL, so it travels in the handshake header only.
+    expect(headers[0]?.authorization).toBe('Bearer api-key');
+    expect(urls).toEqual(['/v1/audio?conversation_id=c1&audio_format=opus']);
     expect(received).toEqual([
       { data: '{"type":"audio.status"}', isBinary: false },
       { data: '010203', isBinary: true },
@@ -126,7 +131,7 @@ describe('createNodeWebSocket', () => {
     // The upgrade request is never answered.
     const server = createServer();
     server.on('upgrade', () => {});
-    const socket = createNodeWebSocket(await listen(server));
+    const socket = createNodeWebSocket(await listen(server), 'api-key');
     // What the session does before it closes a socket.
     socket.onopen = null;
     socket.onmessage = null;

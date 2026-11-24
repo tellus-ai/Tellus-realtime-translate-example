@@ -30,7 +30,7 @@ export function TranslationExample() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const audioSdkEnabled = realtimeSpeechConfig.audioSdkEnabled !== false;
   const clientVad = vadSelected && !audioSdkEnabled;
-  const tokenConfigured = Boolean(realtimeSpeechConfig.accessToken);
+  const tokenConfigured = Boolean(realtimeSpeechConfig.apiKey);
   const active = ['preparing-audio', 'creating', 'configuring', 'connecting', 'recording', 'paused', 'reconnecting', 'stopping'].includes(realtime.phase);
   const busy = ['preparing-audio', 'creating', 'configuring', 'connecting', 'stopping'].includes(realtime.phase);
 

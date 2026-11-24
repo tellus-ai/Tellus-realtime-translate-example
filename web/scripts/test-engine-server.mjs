@@ -22,8 +22,11 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
     const url = new URL(request.url, 'http://127.0.0.1');
     const reply = (value) => { response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); };
     if (request.method === 'POST') {
-      if (url.pathname === '/conversations') return reply({ conversation_id: 'conversation-1' });
-      if (url.pathname.endsWith('/interpretation-settings')) return reply({});
+      // REST는 API 키로, WebSocket은 /v1/access-tokens가 발급한 입장권으로만 연다.
+      if (request.headers.authorization !== 'Bearer test-api-key') stats.errors.push(`Missing API key on ${url.pathname}`);
+      if (url.pathname === '/v1/conversations') return reply({ conversation_id: 'conversation-1' });
+      if (url.pathname === '/v1/access-tokens') return reply({ access_token: 'test-access-token', expires_at_ms: Date.now() + 900000 });
+      if (url.pathname.endsWith('/settings')) return reply({});
       if (url.pathname.endsWith('/end')) {
         stats.endings++;
         for (const socket of results) socket.send(JSON.stringify({ type: 'conversation.ended', data: {} }));
@@ -38,11 +41,15 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
   });
   const websocket = new WebSocketServer({ noServer: true, maxPayload: 65536 });
   server.on('upgrade', (request, socket, head) => websocket.handleUpgrade(request, socket, head, (peer) => {
-    const isAudio = request.url.startsWith('/audio?');
+    const isAudio = request.url.startsWith('/v1/audio?');
+    if (new URL(request.url, 'http://127.0.0.1').searchParams.get('token') !== 'test-access-token') {
+      stats.errors.push(`Missing access token on ${request.url.split('?')[0]}`);
+      peer.close(1008, 'auth_failed');
+      return;
+    }
     const group = isAudio ? audio : results;
     group.add(peer);
     peer.on('close', () => group.delete(peer));
-    if (!isAudio) peer.send(JSON.stringify({ type: 'participants.snapshot', data: {} }));
     let authorized = false;
     let wasAuthorized = false;
     let transcribed = false;
@@ -59,7 +66,9 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
           if (!transcribed) {
             transcribed = true;
             for (const result of results) result.send(JSON.stringify({
-              type: 'result', data: { conversation_id: 'conversation-1', event_type: 'transcript.final', order_seq: 1, text: '실제 엔진 통합 테스트', source_language: 'ko-KR', target_language: null },
+              type: 'transcript.final', data: { conversation_id: 'conversation-1', utterances: [
+                { order_seq: 1, transcript: '실제 엔진 통합 테스트', source_language: 'ko-KR', speaker_id: '1', start_ms: 0, end_ms: 1000 },
+              ] },
             }));
           }
           return;

@@ -22,7 +22,7 @@ import {
 } from './closePolicy';
 import { createNodeWebSocket } from './nodeWebSocket';
 import { parseSocketMessage } from './resultParser';
-import { applyResultEvent, awaitsFinal } from './transcriptReducer';
+import { applyResultEvent, awaitsFinal, lastCompleteOrderSeq } from './transcriptReducer';
 import {
   buildAudioStatusMessage,
   disabledVadSnapshot,
@@ -39,14 +39,14 @@ const AUDIO_FORMAT = 'opus';
 // `readyState` values of a WebSocket.
 const SOCKET_CONNECTING = 0;
 const SOCKET_OPEN = 1;
-// With these errors the authorization module reports that `/audio` is closing: it received a
+// With these errors the authorization module reports that `/v1/audio` is closing: it received a
 // `system.error`, or it saw the close or a connection error itself.
 const AUTHORIZATION_SOCKET_ERRORS = new Set([
   'engine_authorization_server_error',
   'engine_authorization_connection_closed',
   'engine_authorization_connection_failed',
 ]);
-// Errors of the authorization module that a new `/audio` socket repairs, because it is
+// Errors of the authorization module that a new `/v1/audio` socket repairs, because it is
 // authorized from the start: a request got no answer, or the permit ran out before a renewal
 // succeeded. The server closes with the same `engine_authorization_expired` in that case, and
 // either one can arrive first.
@@ -55,8 +55,8 @@ const AUTHORIZATION_RETRY_ERRORS = new Set(['engine_authorization_timeout', 'eng
 type Listener = (snapshot: SessionSnapshot) => void;
 
 /**
- * A socket that is not usable yet: Result before `participants.snapshot`, `/audio` before the
- * engine is authorized.
+ * A socket that is not usable yet: Result before it is open, `/v1/audio` before the engine is
+ * authorized.
  */
 interface PendingOpen {
   timeout: NodeJS.Timeout;
@@ -138,10 +138,10 @@ export class RealtimeTranslationSession {
   private reconnectQueue: Promise<void> = Promise.resolve();
   private stableTimer: NodeJS.Timeout | null = null;
   private capture: MicrophoneCapture | null = null;
-  // Bound to the current `/audio` socket. Disposing it invalidates the native permit, which
+  // Bound to the current `/v1/audio` socket. Disposing it invalidates the native permit, which
   // stops capture.
   private authorization: EngineAuthorizationController | null = null;
-  // Set while `/audio` is about to close: the authorization module has given the socket up, so
+  // Set while `/v1/audio` is about to close: the authorization module has given the socket up, so
   // capture has stopped. Pause and Resume do nothing until the close has been handled.
   private audioCloseTimer: NodeJS.Timeout | null = null;
   private captureStarted = false;
@@ -164,8 +164,9 @@ export class RealtimeTranslationSession {
     private readonly endpoints: RealtimeEndpoints,
     private readonly api: RealtimeApi,
     private readonly createCapture: (denoiseEnabled: boolean) => Promise<MicrophoneCapture>,
-    private readonly getAccessToken: () => string | Promise<string>,
-    private readonly createSocket: (url: string) => RealtimeWebSocket = createNodeWebSocket,
+    // Read again for every new socket and every engine approval, so a changed key takes effect.
+    private readonly getApiKey: () => string,
+    private readonly createSocket: (url: string, apiKey: string) => RealtimeWebSocket = createNodeWebSocket,
   ) {}
 
   subscribe(listener: Listener): () => void {
@@ -219,7 +220,7 @@ export class RealtimeTranslationSession {
     });
   }
 
-  /** Native approval is bound to a capture instance, so replace only /audio, retaining Result. */
+  /** Native approval is bound to a capture instance, so replace only /v1/audio, retaining Result. */
   private async replaceCapture(denoiseEnabled: boolean, generation: number): Promise<boolean> {
     // Keep a pending Result reconnect; only an Audio retry is superseded by this replacement.
     if (!this.socketsToReopen.has('result')) this.clearReconnectTimer();
@@ -317,8 +318,9 @@ export class RealtimeTranslationSession {
       await this.api.saveInterpretationSettings(conversationId, { ...input, clientVad: false });
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
-      // Result first: `/audio` is opened only after Result is ready. A socket that does not
-      // become usable has already failed the start in `handleSocketClose`.
+      // The server accepts the sockets in either order. Result goes first here, so that it is
+      // open before the first audio. A socket that does not become usable has already failed
+      // the start in `handleSocketClose`.
       if (!await this.openSocket('result', conversationId) || generation !== this.generation) return;
       if (!await this.openSocket('audio', conversationId) || generation !== this.generation) return;
 
@@ -482,19 +484,19 @@ export class RealtimeTranslationSession {
   }
 
   /**
-   * Opens a new socket in place of the current one. Resolves `true` once it is usable:
-   * `participants.snapshot` for Result, the engine authorization for `/audio`. Resolves `false`
-   * when it closed, timed out, or was closed by this client first; whoever closed it has already
-   * decided what happens next.
+   * Opens a new socket in place of the current one. Resolves `true` once it is usable: Result
+   * when it is open, `/v1/audio` when the engine is authorized. Neither sends a ready message.
+   * Resolves `false` when it closed, timed out, or was closed by this client first; whoever
+   * closed it has already decided what happens next.
    */
   private openSocket(kind: RealtimeSocket, conversationId: string): Promise<boolean> {
     this.closeSocket(kind);
     this.lastSocketError[kind] = null;
-    const id = encodeURIComponent(conversationId);
+    // Both sockets need a credential. The API key goes in the handshake header (see
+    // nodeWebSocket.ts), never in the URL.
     const socket = this.createSocket(
-      kind === 'result'
-        ? `${this.endpoints.websocketBaseUrl}/conversations/${id}/results`
-        : `${this.endpoints.websocketBaseUrl}/audio?conversation_id=${id}&audio_format=${AUDIO_FORMAT}`,
+      kind === 'result' ? this.resultSocketUrl(conversationId) : this.audioSocketUrl(conversationId),
+      this.getApiKey(),
     );
     this.sockets[kind] = socket;
     this.setConnection(kind, 'connecting');
@@ -502,8 +504,9 @@ export class RealtimeTranslationSession {
     // reject it right after with `system.error` and a close.
     socket.onopen = () => {
       this.setConnection(kind, 'open');
+      if (kind === 'result') this.settleOpen('result', true);
       // From here the engine authorization decides, and it has its own timeout.
-      if (kind === 'audio') clearTimeout(this.pendingOpen.audio?.timeout);
+      else clearTimeout(this.pendingOpen.audio?.timeout);
     };
     socket.onmessage = (event: { data: unknown }) => this.handleSocketMessage(kind, event.data);
     socket.onerror = () => this.setConnection(kind, 'error');
@@ -520,7 +523,23 @@ export class RealtimeTranslationSession {
     return usable;
   }
 
-  /** Binds the engine authorization to a new `/audio` socket. Capture can start once it is approved. */
+  /**
+   * On connect the server first sends the finals stored after `after_order_seq`, then live
+   * results. So a final that was missed while the socket was closed still arrives; without the
+   * query the server sends every stored final.
+   */
+  private resultSocketUrl(conversationId: string): string {
+    const afterOrderSeq = lastCompleteOrderSeq(this.snapshot.rows);
+    const query = afterOrderSeq === null ? '' : `?after_order_seq=${afterOrderSeq}`;
+    return `${this.endpoints.websocketBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/results${query}`;
+  }
+
+  private audioSocketUrl(conversationId: string): string {
+    const id = encodeURIComponent(conversationId);
+    return `${this.endpoints.websocketBaseUrl}/v1/audio?conversation_id=${id}&audio_format=${AUDIO_FORMAT}`;
+  }
+
+  /** Binds the engine authorization to a new `/v1/audio` socket. Capture can start once it is approved. */
   private authorizeAudio(socket: RealtimeWebSocket, conversationId: string): void {
     const capture = this.capture;
     if (!capture) throw new Error('Audio capture is unavailable.');
@@ -533,7 +552,8 @@ export class RealtimeTranslationSession {
     };
     const authorization = attachEngineAuthorization(socket, capture, {
       conversationId,
-      getAccessToken: this.getAccessToken,
+      // The SDK calls its credential an access token. The server accepts the API key here.
+      getAccessToken: this.getApiKey,
       onError,
     });
     this.authorization = authorization;
@@ -544,7 +564,7 @@ export class RealtimeTranslationSession {
   }
 
   /**
-   * The authorization module reports why it gave the `/audio` socket up. By then it has
+   * The authorization module reports why it gave the `/v1/audio` socket up. By then it has
    * invalidated the native permit, so capture has stopped.
    */
   private handleAuthorizationError(error: Error): void {
@@ -591,7 +611,7 @@ export class RealtimeTranslationSession {
     if (kind === 'audio') {
       if (this.audioCloseTimer !== null) clearTimeout(this.audioCloseTimer);
       this.audioCloseTimer = null;
-      // Disposing the authorization stops native capture. The next `/audio` socket has to be
+      // Disposing the authorization stops native capture. The next `/v1/audio` socket has to be
       // authorized before capture starts again.
       this.authorization?.dispose();
       this.authorization = null;
@@ -614,15 +634,12 @@ export class RealtimeTranslationSession {
       this.lastSocketError[kind] = parsed.error;
       return;
     }
-    // The authorization module reads the other messages on `/audio`.
+    // The authorization module reads the other messages on `/v1/audio`.
     if (kind === 'audio') return;
 
-    if (parsed.kind === 'ready') {
-      // Result does not send again what it sent while this client was disconnected, and the
-      // example does not recover it: after a reconnect only later results arrive.
-      this.settleOpen('result', true);
-    } else if (parsed.kind === 'result') {
-      this.update({ rows: applyResultEvent(this.snapshot.rows, parsed.event) });
+    if (parsed.kind === 'result') {
+      // Finals that the server sends again after a reconnect replace the same rows.
+      this.update({ rows: parsed.events.reduce(applyResultEvent, this.snapshot.rows) });
     } else if (parsed.kind === 'error') {
       this.update({ error: parsed.message });
     } else if (parsed.kind === 'ended') {
@@ -666,7 +683,7 @@ export class RealtimeTranslationSession {
     this.reconnectTimer = setTimeout(() => this.reconnectNow(), delayMs);
   }
 
-  /** Recording continues while only Result is down, but not without `/audio`. */
+  /** Recording continues while only Result is down, but not without `/v1/audio`. */
   private suspendAudio(): void {
     this.acceptingAudio = false;
     // Capture stopped with the authorization of the closed socket, and starts again from a
@@ -695,7 +712,7 @@ export class RealtimeTranslationSession {
       this.intentionalClose || generation !== this.generation || this.reconnectTimer !== null;
     if (!conversationId || superseded() || this.socketsToReopen.size === 0) return;
 
-    // Result first: `/audio` is opened only after Result is ready.
+    // Result first, as in `start`.
     if (this.socketsToReopen.has('result')) {
       if (!await this.openSocket('result', conversationId) || superseded()) return;
     }

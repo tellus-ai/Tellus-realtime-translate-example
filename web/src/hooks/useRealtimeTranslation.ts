@@ -10,7 +10,7 @@ export function useRealtimeTranslation() {
     () => new RealtimeTranslationSession(
       realtimeSpeechConfig,
       new BrowserMicrophone(),
-      realtimeSpeechConfig.accessToken,
+      realtimeSpeechConfig.apiKey,
     ),
     [],
   );

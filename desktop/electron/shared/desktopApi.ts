@@ -19,7 +19,7 @@ export type DesktopConfigArgumentPrefix = '--tellus-desktop-config=';
 
 export interface DesktopConfig {
   audioSdkEnabled: boolean;
-  accessTokenConfigured: boolean;
+  apiKeyConfigured: boolean;
 }
 
 export interface StartConversationInput {

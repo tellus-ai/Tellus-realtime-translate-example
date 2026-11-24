@@ -1,34 +1,110 @@
 import { parseSocketMessage } from '../src/realtime/resultParser';
 
+const CONVERSATION = { conversation_id: 'conversation-1' };
+const TIMES = { speaker_id: '1', start_ms: 1352, end_ms: 6212 };
+const parse = (message: object) => parseSocketMessage(JSON.stringify(message));
+
 describe('parseSocketMessage', () => {
-  it('parses a result envelope', () => {
-    expect(parseSocketMessage(JSON.stringify({
-      type: 'result',
+  it('reads every utterance of a transcript.final, each with its own order_seq', () => {
+    expect(parse({
+      type: 'transcript.final',
       data: {
-        conversation_id: 'conversation-1',
-        event_type: 'transcript.final',
-        order_seq: 3,
-        text: '안녕하세요',
-        source_language: 'ko-KR',
-        target_language: null,
+        ...CONVERSATION,
+        utterances: [
+          { order_seq: 0, transcript: '다음 안건으로 넘어가겠습니다', source_language: 'ko-KR', ...TIMES },
+          { order_seq: 1, transcript: " Let's check the budget first.", source_language: 'en-US', ...TIMES },
+        ],
       },
-    }))).toEqual({
+    })).toEqual({
       kind: 'result',
-      event: {
-        conversationId: 'conversation-1',
-        eventType: 'transcript.final',
-        orderSeq: 3,
-        text: '안녕하세요',
-        sourceLanguage: 'ko-KR',
-        targetLanguage: null,
-      },
+      events: [
+        {
+          conversationId: 'conversation-1', eventType: 'transcript.final', orderSeq: 0,
+          text: '다음 안건으로 넘어가겠습니다', sourceLanguage: 'ko-KR', targetLanguage: null,
+        },
+        {
+          conversationId: 'conversation-1', eventType: 'transcript.final', orderSeq: 1,
+          text: " Let's check the budget first.", sourceLanguage: 'en-US', targetLanguage: null,
+        },
+      ],
     });
   });
 
-  it('separates control messages', () => {
-    expect(parseSocketMessage('{"type":"participants.snapshot","data":{}}')).toEqual({ kind: 'ready' });
+  it('reads a translation.final by the order_seq and target language of its item', () => {
+    expect(parse({
+      type: 'translation.final',
+      data: {
+        ...CONVERSATION,
+        translations: [
+          { order_seq: 7, translation: 'Hello', source_language: 'ko-KR', target_language: 'en-US', ...TIMES },
+        ],
+      },
+    })).toEqual({
+      kind: 'result',
+      events: [{
+        conversationId: 'conversation-1', eventType: 'translation.final', orderSeq: 7,
+        text: 'Hello', sourceLanguage: 'ko-KR', targetLanguage: 'en-US',
+      }],
+    });
+  });
+
+  it('shows the parts of a transcript.preview as one text under the open order_seq', () => {
+    expect(parse({
+      type: 'transcript.preview',
+      data: {
+        ...CONVERSATION,
+        order_seq: 7,
+        utterances: [
+          { transcript: '네 그럼 다음 안건으로', source_language: 'ko-KR', ...TIMES },
+          { transcript: " Let's check", source_language: 'en-US', ...TIMES },
+        ],
+      },
+    })).toEqual({
+      kind: 'result',
+      events: [{
+        conversationId: 'conversation-1', eventType: 'transcript.preview', orderSeq: 7,
+        text: "네 그럼 다음 안건으로 Let's check", sourceLanguage: 'ko-KR', targetLanguage: null,
+      }],
+    });
+  });
+
+  it('groups a translation.preview by target language and skips the empty slots', () => {
+    expect(parse({
+      type: 'translation.preview',
+      data: {
+        ...CONVERSATION,
+        order_seq: 7,
+        translations: [
+          { translation: 'Then the next item', source_language: 'ko-KR', target_language: 'en-US', ...TIMES },
+          { translation: '', source_language: 'en-US', target_language: null, ...TIMES },
+          { translation: '예산을 확인합시다', source_language: 'en-US', target_language: 'ko-KR', ...TIMES },
+          { translation: 'please', source_language: 'ko-KR', target_language: 'en-US', ...TIMES },
+        ],
+      },
+    })).toMatchObject({
+      kind: 'result',
+      events: [
+        { eventType: 'translation.preview', orderSeq: 7, text: 'Then the next item please', targetLanguage: 'en-US' },
+        { eventType: 'translation.preview', orderSeq: 7, text: '예산을 확인합시다', targetLanguage: 'ko-KR' },
+      ],
+    });
+  });
+
+  it('keeps a language that the server does not know as null', () => {
+    expect(parse({
+      type: 'transcript.final',
+      data: { ...CONVERSATION, utterances: [{ order_seq: 3, transcript: '...', source_language: null, ...TIMES }] },
+    })).toMatchObject({ events: [{ orderSeq: 3, sourceLanguage: null }] });
+  });
+
+  it('separates control messages and ignores the types it does not show', () => {
     expect(parseSocketMessage('{"type":"conversation.ended","data":{}}')).toEqual({ kind: 'ended' });
-    expect(parseSocketMessage('{"type":"participant.joined","data":{}}')).toEqual({ kind: 'ignored' });
+    for (const type of ['settings.updated', 'tts.completed', 'tts.skipped', 'a.type.added.later']) {
+      expect(parse({ type, data: { ...CONVERSATION } })).toEqual({ kind: 'ignored' });
+    }
+    // The shape of the unversioned routes is not a /v1 result.
+    expect(parse({ type: 'result', data: { event_type: 'transcript.final', text: '안녕' } })).toEqual({ kind: 'ignored' });
+    expect(parse({ type: 'participants.snapshot', data: {} })).toEqual({ kind: 'ignored' });
   });
 
   it('reads the reason and message of a system.error', () => {
@@ -43,7 +119,7 @@ describe('parseSocketMessage', () => {
     });
   });
 
-  it('reads retry_after_ms from the /audio reconnect rate limit', () => {
+  it('reads retry_after_ms from the /v1/audio reconnect rate limit', () => {
     const rateLimited = (retryAfterMs: unknown) => parseSocketMessage(JSON.stringify({
       type: 'system.error',
       statusCode: '1013',
@@ -63,11 +139,30 @@ describe('parseSocketMessage', () => {
     });
   });
 
-  it('still reports an invalid result payload as an error', () => {
-    expect(parseSocketMessage('{"type":"result","data":{"event_type":"transcript.final"}}')).toEqual({
-      kind: 'error',
-      message: 'Invalid Result WebSocket payload.',
-    });
+  it.each<[string, object]>([
+    ['no item array', { type: 'transcript.final', data: { ...CONVERSATION } }],
+    ['no conversation_id', { type: 'transcript.final', data: { utterances: [] } }],
+    ['a final item without order_seq', {
+      type: 'transcript.final',
+      data: { ...CONVERSATION, utterances: [{ transcript: '안녕', source_language: 'ko-KR' }] },
+    }],
+    ['a preview without order_seq', {
+      type: 'transcript.preview',
+      data: { ...CONVERSATION, utterances: [{ transcript: '안녕', source_language: 'ko-KR' }] },
+    }],
+    ['an item without its text', {
+      type: 'translation.final',
+      data: { ...CONVERSATION, translations: [{ order_seq: 1, source_language: 'ko-KR', target_language: 'en-US' }] },
+    }],
+    ['a negative order_seq', {
+      type: 'transcript.final',
+      data: { ...CONVERSATION, utterances: [{ order_seq: -1, transcript: '안녕', source_language: 'ko-KR' }] },
+    }],
+  ])('reports a result with %s as an error', (_name, message) => {
+    expect(parse(message)).toEqual({ kind: 'error', message: 'Invalid Result WebSocket payload.' });
+  });
+
+  it('reports invalid JSON as an error', () => {
     expect(parseSocketMessage('not json')).toEqual({ kind: 'error', message: 'Result WebSocket returned invalid JSON.' });
   });
 });
