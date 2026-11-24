@@ -17,6 +17,19 @@ beforeEach(() => {
 });
 
 describe('mobile SDK denoise', () => {
+  it('starts with denoise off, in close_talk mode with the engine default settings written out', async () => {
+    const microphone = new NativeMicrophone();
+    expect(microphone.denoiseEnabled).toBe(false);
+    capture.getStatus.mockResolvedValue({ state: 'stopped', denoiseEnabled: false });
+    await microphone.prepare(false);
+    expect(init).toHaveBeenCalledWith(expect.objectContaining({
+      denoiseEnabled: false,
+      denoiseMode: 'close_talk', closeTalkThresholdDb: 30, denoiseAttenuationLimitDb: 12,
+      closeTalkHoldMs: 250, closeTalkKeepGapDb: 4, closeTalkLevelMarginDb: 2, closeTalkLevelMinDbfs: -20,
+    }));
+    expect(microphone.denoiseEnabled).toBe(false);
+  });
+
   it('applies a pre-start selection instead of the environment default', async () => {
     const microphone = new NativeMicrophone();
     await microphone.setDenoiseEnabled(false);
@@ -71,7 +84,7 @@ describe('required mobile Audio SDK', () => {
     const microphone = new NativeMicrophone();
     expect(microphone.audioSdkReady).toBe(false);
     await microphone.prepare(true);
-    expect(init).toHaveBeenCalledWith(expect.objectContaining({ vadEnabled: false, denoiseMode: 'general' }));
+    expect(init).toHaveBeenCalledWith(expect.objectContaining({ vadEnabled: false, denoiseMode: 'close_talk' }));
     expect(microphone.audioSdkReady).toBe(true);
     await microphone.stop();
     expect(microphone.audioSdkReady).toBe(false);

@@ -1,4 +1,4 @@
-import type { AudioEngine, AudioCapture, AudioChunk } from '@tellus-ai/audio-sdk-web';
+import type { AudioCaptureConfig, AudioEngine, AudioCapture, AudioChunk } from '@tellus-ai/audio-sdk-web';
 import { attachEngineAuthorization, type EngineAuthorizationController } from '@tellus-ai/audio-sdk-web/authorization';
 import { browserEngineAssets } from '../config/browserEngineAssets';
 
@@ -15,6 +15,19 @@ export interface MicrophoneRecorder {
   resume(): Promise<void>;
   stop(): Promise<void>;
 }
+
+// Denoise starts off. When it is turned on, it runs in close_talk mode: a near-speech gate turns sound
+// that is not close to the microphone into silence (about 330 ms more delay, attenuation capped).
+// The values are the engine defaults (SDK 0.3.13 / engine 0.4.13), written out so they can be tuned.
+export const DENOISE_SETTINGS = {
+  denoiseMode: 'close_talk',
+  closeTalkThresholdDb: 30,
+  denoiseAttenuationLimitDb: 12,
+  closeTalkHoldMs: 250,
+  closeTalkKeepGapDb: 4,
+  closeTalkLevelMarginDb: 2,
+  closeTalkLevelMinDbfs: -20,
+} as const satisfies AudioCaptureConfig;
 
 /** OS 입력·DSP·VAD·codec을 공통 SDK capture에 위임한다. */
 export class BrowserMicrophone implements MicrophoneRecorder {
@@ -48,10 +61,7 @@ export class BrowserMicrophone implements MicrophoneRecorder {
       const engine = await AudioEngine.init({
         micEnabled: true, processing: { sampleRate: 16000, chunkDurationMs: 20 },
         transport: { codec: 'opus', bitrateBps: 64000 },
-        vadEnabled: false, denoiseEnabled: this.denoise,
-        // The SDK default, 'close_talk', also gates out sound that is not close to the microphone.
-        // An interpreted conversation has a second speaker farther away, so keep plain denoise.
-        denoiseMode: 'general',
+        vadEnabled: false, denoiseEnabled: this.denoise, ...DENOISE_SETTINGS,
         echoCancellationEnabled: true, micAgc2Enabled: false,
       }, browserEngineAssets(false));
       if (generation !== this.generation) {

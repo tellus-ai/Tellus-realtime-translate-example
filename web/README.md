@@ -44,7 +44,7 @@ unlocks the VAD toggle.
 - WebSocket 기본값: `wss://public.speech.tellus.ai.kr`
 - 전송: Rust Opus, 16 kHz, mono, 20 ms
 - `VITE_TELLUS_AUDIO_ASSET_BASE`: 엔진·ORT·암호화 모델 자산의 기준 URL. 기본값은 문서 URL 기준 `tellus-audio/`입니다.
-- `VITE_TELLUS_DENOISE=true`: DeepFilterNet3 denoise를 활성화합니다. 기본값은 `false`입니다. 예제는 `denoiseMode: 'general'`을 지정합니다. SDK 기본값 `close_talk`는 마이크에서 먼 소리를 무음으로 만들어, 떨어져 있는 상대 화자의 말이 빠질 수 있습니다.
+- `VITE_TELLUS_DENOISE=true`: DeepFilterNet3 denoise를 활성화합니다. 기본값은 `false`입니다. 켜면 `denoiseMode: 'close_talk'`로 동작합니다. 마이크 가까이에서 말한 소리만 통과시키고 먼 소리는 무음으로 만들며, 지연이 약 330 ms 늘어납니다. 세부 값은 엔진 기본값을 `src/audio/BrowserMicrophone.ts`의 `DENOISE_SETTINGS`에 그대로 적어 두었습니다(`closeTalkThresholdDb` 30, `denoiseAttenuationLimitDb` 12, `closeTalkHoldMs` 250, `closeTalkKeepGapDb` 4, `closeTalkLevelMarginDb` 2, `closeTalkLevelMinDbfs` -20). 떨어져 있는 상대 화자의 말이 빠지면 임계값을 낮추거나 `'general'`로 바꿉니다.
 
 Start 버튼에서 AudioContext를 준비한 뒤 `/v1/audio`의 엔진 permit을 검증하고 HPKE 모델 키를 적용합니다. 암호화 모델 복호화와 모델 로드는 Rust 엔진에서 수행하며 승인 완료 뒤 마이크를 시작합니다. API 키나 모델 콘텐츠 키를 SDK 자산에 포함하지 않습니다.
 

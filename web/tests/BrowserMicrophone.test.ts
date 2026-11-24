@@ -26,10 +26,15 @@ describe('browser SDK denoise', () => {
     expect(microphone.denoiseEnabled).toBe(true);
   });
 
-  it('asks for plain denoise, not the close-talk gate that silences a speaker farther from the microphone', async () => {
+  it('starts with denoise off, in close_talk mode with the engine default settings written out', async () => {
     const microphone = new BrowserMicrophone();
+    expect(microphone.denoiseEnabled).toBe(false);
     await microphone.prepare(false);
-    expect(sdk.init).toHaveBeenCalledWith(expect.objectContaining({ denoiseMode: 'general' }), expect.anything());
+    expect(sdk.init).toHaveBeenCalledWith(expect.objectContaining({
+      denoiseEnabled: false,
+      denoiseMode: 'close_talk', closeTalkThresholdDb: 30, denoiseAttenuationLimitDb: 12,
+      closeTalkHoldMs: 250, closeTalkKeepGapDb: 4, closeTalkLevelMarginDb: 2, closeTalkLevelMinDbfs: -20,
+    }), expect.anything());
   });
 
   it('changes the existing SDK capture and reads its applied state without restarting it', async () => {

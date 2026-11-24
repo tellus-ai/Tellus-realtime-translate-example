@@ -18,7 +18,11 @@ describe('required desktop Audio SDK', () => {
   it('initializes without VAD and marks only SDK capture as enabled', async () => {
     const { createMicrophoneCapture } = await import('../electron/audio/audioEngine');
     const capture = await createMicrophoneCapture(async () => true);
-    expect(sdk.init).toHaveBeenCalledWith(expect.objectContaining({ vadEnabled: false, denoiseMode: 'general' }));
+    expect(sdk.init).toHaveBeenCalledWith(expect.objectContaining({
+      vadEnabled: false, denoiseEnabled: false,
+      denoiseMode: 'close_talk', closeTalkThresholdDb: 30, denoiseAttenuationLimitDb: 12,
+      closeTalkHoldMs: 250, closeTalkKeepGapDb: 4, closeTalkLevelMarginDb: 2, closeTalkLevelMinDbfs: -20,
+    }));
     expect(capture.audioSdkReady).toBe(true);
   });
 

@@ -1,14 +1,25 @@
 import type { AudioCaptureConfig, AudioEngine } from '@tellus-ai/audio-sdk-desktop';
 import type { MicrophoneCapture } from '../realtime/RealtimeTranslationSession';
 
+// Denoise starts off. When it is turned on, it runs in close_talk mode: a near-speech gate turns sound
+// that is not close to the microphone into silence (about 330 ms more delay, attenuation capped).
+// The values are the engine defaults (SDK 0.3.13 / engine 0.4.13), written out so they can be tuned.
+export const DENOISE_SETTINGS = {
+  denoiseMode: 'close_talk',
+  closeTalkThresholdDb: 30,
+  denoiseAttenuationLimitDb: 12,
+  closeTalkHoldMs: 250,
+  closeTalkKeepGapDb: 4,
+  closeTalkLevelMarginDb: 2,
+  closeTalkLevelMinDbfs: -20,
+} as const satisfies AudioCaptureConfig;
+
 const AUDIO_CAPTURE_CONFIG: AudioCaptureConfig = {
   micEnabled: true,
   speakerEnabled: false,
   // Same default as the Tellus desktop app. The engine DSP chain still runs.
   denoiseEnabled: false,
-  // The SDK default, 'close_talk', also gates out sound that is not close to the microphone.
-  // An interpreted conversation has a second speaker farther away, so keep plain denoise.
-  denoiseMode: 'general',
+  ...DENOISE_SETTINGS,
   vadEnabled: false,
   processing: { sampleRate: 16_000, chunkDurationMs: 20 },
   transport: { codec: 'opus', bitrateBps: 64_000 },

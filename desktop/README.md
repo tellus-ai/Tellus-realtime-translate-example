@@ -83,7 +83,12 @@ The main process owns the whole session; the renderer only draws it.
 - **Audio SDK.** `AudioEngine.init()` runs at app start with client VAD disabled. Each session requires
   SDK capture with 16 kHz, 20 ms Opus frames at 64 kbps. The UI shows **Audio SDK: 사용 중 / 사용하지 않음**
   from the configured audio processing mode, independently of capture readiness. Missing or failed SDK initialization is a session error before a
-  Conversation is created. Denoise defaults to off, matching the Tellus desktop app default.
+  Conversation is created. Denoise defaults to off, matching the Tellus desktop app default. When it is
+  on, it runs in `denoiseMode: 'close_talk'`: only sound close to the microphone passes, far sound becomes
+  silence, and the delay grows by about 330 ms. The values are the engine defaults, written out in
+  `DENOISE_SETTINGS` in `electron/audio/audioEngine.ts` (`closeTalkThresholdDb` 30,
+  `denoiseAttenuationLimitDb` 12, `closeTalkHoldMs` 250, `closeTalkKeepGapDb` 4, `closeTalkLevelMarginDb` 2,
+  `closeTalkLevelMinDbfs` -20). Lower the threshold or switch to `'general'` if a speaker farther away is cut.
 - **Denoise control.** Change **Noise Reduction (Denoise)** before Start, while recording, or while
   paused. The selection is passed to `AudioEngine.init()` and retained between sessions.
   Since the desktop SDK configures denoise when creating capture, a live change replaces capture
