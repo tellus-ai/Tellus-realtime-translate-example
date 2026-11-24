@@ -1,3 +1,4 @@
+import { ConversationAccessTokens } from '../api/accessTokens';
 import {
   buildAudioWebSocketUrl,
   buildResultWebSocketUrl,
@@ -7,6 +8,7 @@ import {
   type RealtimeEndpoints,
   type StartConversationInput,
 } from '../api/conversationApi';
+import { gotNoResponse, RealtimeApiError } from '../api/httpClient';
 import type { MicrophoneRecorder } from '../audio/BrowserMicrophone';
 import { OggOpusRecording, type AudioRecordingFile } from '../audio/OggOpusRecording';
 import type { AudioChunk } from '@tellus-ai/audio-sdk-web';
@@ -20,12 +22,13 @@ import {
 } from './VADAudioStatus';
 import {
   decideSocketClose,
+  reconnectDelayMs,
   STABLE_CONNECTION_MS,
   type RealtimeSocket,
   type SystemError,
 } from './closePolicy';
 import { parseSocketMessage } from './resultParser';
-import { applyResultEvent, awaitsFinal } from './transcriptReducer';
+import { applyResultEvent, awaitsFinal, lastCompleteOrderSeq } from './transcriptReducer';
 import type { ConnectionStatus, SessionSnapshot } from './types';
 
 const SOCKET_OPEN_TIMEOUT = 10_000;
@@ -34,7 +37,7 @@ const CONVERSATION_ENDED_TIMEOUT = 5_000;
 
 type Listener = (snapshot: SessionSnapshot) => void;
 
-/** /audio 승인 또는 Result participants.snapshot을 기다리는 소켓이다. */
+/** /v1/audio 승인 또는 Result 연결 열림을 기다리는 소켓이다. */
 interface PendingOpen {
   timeout: number;
   resolve(usable: boolean): void;
@@ -56,6 +59,8 @@ export class RealtimeTranslationSession {
   private listeners = new Set<Listener>();
   private recording = new OggOpusRecording();
   private sockets: Record<RealtimeSocket, WebSocket | null> = { result: null, audio: null };
+  // The browser has no API key: both sockets open with an access token from this app's server.
+  private accessTokens: ConversationAccessTokens | null = null;
   // The server explains an error close with a `system.error` just before it.
   private lastSocketError: Record<RealtimeSocket, SystemError | null> = { result: null, audio: null };
   private pendingOpen: Record<RealtimeSocket, PendingOpen | null> = { result: null, audio: null };
@@ -82,7 +87,6 @@ export class RealtimeTranslationSession {
   constructor(
     private readonly endpoints: RealtimeEndpoints,
     private readonly microphone: MicrophoneRecorder,
-    private readonly accessToken: string,
   ) { this.snapshot.denoise.enabled = microphone.denoiseEnabled; }
 
   subscribe(listener: Listener): () => void {
@@ -120,7 +124,6 @@ export class RealtimeTranslationSession {
   }
 
   async start(input: StartConversationInput): Promise<void> {
-    if (!this.accessToken) throw new Error('Set the API_KEY environment variable.');
     if (!input.sourceLanguage || !input.targetLanguage) throw new Error('Select two languages.');
     if (input.sourceLanguage === input.targetLanguage) throw new Error('Select two different languages.');
     if (!['idle', 'ended', 'error'].includes(this.snapshot.phase) || this.snapshot.denoise.updating) return;
@@ -153,15 +156,14 @@ export class RealtimeTranslationSession {
       if (!this.microphone.audioSdkReady) throw new Error('Audio SDK is required. Non-SDK audio capture is not supported.');
       this.update({ phase: 'creating', audioSdkReady: true, denoise: { ...this.snapshot.denoise, applied: this.microphone.denoiseEnabled } });
 
-      const conversationId = await createConversation(this.endpoints, this.accessToken);
+      const conversationId = await createConversation(this.endpoints);
       if (generation !== this.generation) {
-        await endConversation(this.endpoints, this.accessToken, conversationId).catch(() => {});
+        await endConversation(this.endpoints, conversationId).catch(() => {});
         return;
       }
       this.update({ phase: 'configuring', conversationId });
       await saveInterpretationSettings(
         this.endpoints,
-        this.accessToken,
         conversationId,
         input.sourceLanguage,
         input.targetLanguage,
@@ -169,10 +171,14 @@ export class RealtimeTranslationSession {
       );
       if (generation !== this.generation) return;
       this.update({ phase: 'connecting' });
-      // Result first: `/audio` is opened only after Result is ready. A socket that does not
-      // become usable has already failed the start in `handleSocketClose`.
-      if (!await this.openSocket('result', conversationId) || generation !== this.generation) return;
-      if (!await this.openSocket('audio', conversationId) || generation !== this.generation) return;
+      this.accessTokens = new ConversationAccessTokens(this.endpoints, conversationId);
+      const accessToken = await this.currentAccessToken();
+      if (generation !== this.generation) return;
+      // The server accepts the sockets in either order. Result goes first here, so that it is
+      // open before the first audio. A socket that does not become usable has already failed
+      // the start in `handleSocketClose`.
+      if (!await this.openSocket('result', conversationId, accessToken) || generation !== this.generation) return;
+      if (!await this.openSocket('audio', conversationId, accessToken) || generation !== this.generation) return;
 
       this.update({ vad: disabledVadSnapshot(true) });
       const framesBeforeMicrophoneReady: AudioChunk[] = [];
@@ -214,7 +220,7 @@ export class RealtimeTranslationSession {
   private async pauseNow(): Promise<void> {
     if (this.snapshot.phase !== 'recording') return;
     const generation = this.generation;
-    // `/audio` can close, or the session can start closing, during any await below. The phase
+    // `/v1/audio` can close, or the session can start closing, during any await below. The phase
     // then belongs to the reconnect: only `desiredPaused` is kept, and `resumeAudio` applies it.
     const interrupted = () => generation !== this.generation || this.snapshot.phase !== 'recording';
     this.desiredPaused = true;
@@ -248,7 +254,7 @@ export class RealtimeTranslationSession {
       this.update({ phase: 'recording', vad });
       this.acceptingAudio = true;
       await this.microphone.resume();
-      // `/audio` closed, or the session started closing, while the microphone was resuming.
+      // `/v1/audio` closed, or the session started closing, while the microphone was resuming.
       if (!this.acceptingAudio) await this.microphone.pause().catch(() => {});
     } catch (error) {
       this.acceptingAudio = false;
@@ -286,9 +292,7 @@ export class RealtimeTranslationSession {
     );
     await this.cleanupLocal({ keepResultSocket: true });
     try {
-      if (conversationId && this.accessToken) {
-        await endConversation(this.endpoints, this.accessToken, conversationId);
-      }
+      if (conversationId) await endConversation(this.endpoints, conversationId);
       // `conversation.ended` and the HTTP response arrive in either order, and results can
       // still arrive until then. `handleSocketMessage` closes the socket on `conversation.ended`.
       await this.waitForSnapshot(
@@ -323,16 +327,17 @@ export class RealtimeTranslationSession {
   }
 
   /**
-   * /audio permit·모델 키 또는 Result participants.snapshot이 준비되면 true를 반환한다.
+   * /v1/audio permit·모델 키가 준비되거나 Result 연결이 열리면 true를 반환한다.
    * 닫힘·타임아웃이면 false를 반환하고 해당 close 정책이 후속 동작을 결정한다.
    */
-  private openSocket(kind: RealtimeSocket, conversationId: string): Promise<boolean> {
+  private openSocket(kind: RealtimeSocket, conversationId: string, accessToken: string): Promise<boolean> {
     this.closeSocket(kind);
     this.lastSocketError[kind] = null;
     const socket = new WebSocket(
       kind === 'result'
-        ? buildResultWebSocketUrl(this.endpoints, conversationId)
-        : buildAudioWebSocketUrl(this.endpoints, conversationId, this.audioFormat),
+        // The server first sends the finals stored after `after_order_seq`, then live results.
+        ? buildResultWebSocketUrl(this.endpoints, conversationId, accessToken, lastCompleteOrderSeq(this.snapshot.rows))
+        : buildAudioWebSocketUrl(this.endpoints, conversationId, this.audioFormat, accessToken),
     );
     if (kind === 'audio') socket.binaryType = 'arraybuffer';
     this.sockets[kind] = socket;
@@ -341,7 +346,10 @@ export class RealtimeTranslationSession {
     // reject it right after with `system.error` and a close.
     socket.onopen = () => {
       this.setConnection(kind, 'open');
-      if (kind === 'audio' && this.pendingOpen.audio) window.clearTimeout(this.pendingOpen.audio.timeout);
+      // Neither socket sends a ready message. Result is usable once it is open; `/v1/audio` is
+      // usable once the engine approval below has arrived.
+      if (kind === 'result') this.settleOpen('result', true);
+      else if (this.pendingOpen.audio) window.clearTimeout(this.pendingOpen.audio.timeout);
     };
     socket.onmessage = (event) => this.handleSocketMessage(kind, event.data);
     socket.onerror = () => this.setConnection(kind, 'error');
@@ -354,7 +362,8 @@ export class RealtimeTranslationSession {
         const onError = (error: Error) => {
           if (socket === this.sockets.audio && !this.intentionalClose) this.handleAuthorizationError(error);
         };
-        void this.microphone.authorize(socket, conversationId, this.accessToken, onError).then(() => {
+        // The approval is renewed while the socket is open, each time with a current token.
+        void this.microphone.authorize(socket, conversationId, this.currentAccessToken, onError).then(() => {
           if (socket === this.sockets.audio && this.audioCloseTimer === null) this.settleOpen('audio', true);
         }, onError);
       }
@@ -417,13 +426,12 @@ export class RealtimeTranslationSession {
       this.lastSocketError[kind] = parsed.error;
       return;
     }
-    // 공통 승인 controller가 /audio의 permit·모델 키 메시지를 처리한다.
+    // 공통 승인 controller가 /v1/audio의 permit·모델 키 메시지를 처리한다.
     if (kind === 'audio') return;
 
-    if (parsed.kind === 'ready') {
-      this.settleOpen('result', true);
-    } else if (parsed.kind === 'result') {
-      this.update({ rows: applyResultEvent(this.snapshot.rows, parsed.event) });
+    if (parsed.kind === 'result') {
+      // Finals that the server sends again after a reconnect replace the same rows.
+      this.update({ rows: parsed.events.reduce(applyResultEvent, this.snapshot.rows) });
     } else if (parsed.kind === 'error') {
       this.update({ error: parsed.message });
     } else if (parsed.kind === 'ended') {
@@ -461,13 +469,17 @@ export class RealtimeTranslationSession {
     this.clearStableTimer();
     this.socketsToReopen.add(kind);
     if (kind === 'audio') this.suspendAudio();
-    // An attempt that is already waiting reopens this socket as well.
+    this.scheduleReconnectAttempt(delayMs);
+  }
+
+  private scheduleReconnectAttempt(delayMs: number): void {
+    // An attempt that is already waiting reopens every closed socket.
     if (this.reconnectTimer !== null) return;
     this.reconnectAttempt += 1;
     this.reconnectTimer = window.setTimeout(() => this.reconnectNow(), delayMs);
   }
 
-  /** Recording continues while only Result is down, but not without `/audio`. */
+  /** Recording continues while only Result is down, but not without `/v1/audio`. */
   private suspendAudio(): void {
     this.acceptingAudio = false;
     this.update({ phase: 'reconnecting' });
@@ -512,17 +524,27 @@ export class RealtimeTranslationSession {
     if (!conversationId || superseded() || this.socketsToReopen.size === 0 ||
         typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
 
-    // Result first: `/audio` is opened only after Result is ready.
+    // The token of the first connection may have expired by now.
+    let accessToken: string;
+    try {
+      accessToken = await this.currentAccessToken();
+    } catch (error) {
+      if (!superseded()) this.handleAccessTokenFailure(error);
+      return;
+    }
+    if (superseded()) return;
+
+    // Result first, as in `start`.
     if (this.socketsToReopen.has('result')) {
-      if (!await this.openSocket('result', conversationId) || superseded()) return;
+      if (!await this.openSocket('result', conversationId, accessToken) || superseded()) return;
     }
     if (this.socketsToReopen.has('audio')) {
       await this.reconnectPreparation;
       if (superseded()) return;
       this.reconnectPreparation = null;
-      // A new `/audio` socket counts samples from 0 again.
+      // A new `/v1/audio` socket counts samples from 0 again.
       this.sampleCursor = 0;
-      if (!await this.openSocket('audio', conversationId)) return;
+      if (!await this.openSocket('audio', conversationId, accessToken)) return;
       await this.resumeAudio(generation);
     }
     if (superseded() || this.socketsToReopen.size > 0) return;
@@ -532,6 +554,25 @@ export class RealtimeTranslationSession {
       this.stableTimer = null;
       this.reconnectAttempt = 0;
     }, STABLE_CONNECTION_MS);
+  }
+
+  /** For a new socket, and for each engine approval on `/v1/audio`. */
+  private readonly currentAccessToken = (): Promise<string> =>
+    this.accessTokens?.get() ?? Promise.reject(new Error('No Conversation is open.'));
+
+  /** Without a token no socket can be opened. Decides as for a socket that the server closed. */
+  private handleAccessTokenFailure(error: unknown): void {
+    // Anything else, such as an answer without a token, would fail the same way again.
+    const status = error instanceof RealtimeApiError ? error.status : undefined;
+    if (status === 404 || status === 410) {
+      // The Conversation is gone or has ended.
+      this.finishEnded();
+    } else if (status !== undefined && (gotNoResponse(status) || status === 503)) {
+      // No response, or temporarily unavailable: try again as after a lost connection.
+      this.scheduleReconnectAttempt(reconnectDelayMs(this.reconnectAttempt));
+    } else {
+      this.failActiveSession(error instanceof Error ? error.message : String(error));
+    }
   }
 
   private async resumeAudio(generation: number): Promise<void> {
@@ -624,8 +665,8 @@ export class RealtimeTranslationSession {
       .then(async () => {
         // The error shows first: `POST /end` can take long when it is retried.
         this.update({ phase: 'error', error: message });
-        if (shouldEndConversation && conversationId && this.accessToken) {
-          await endConversation(this.endpoints, this.accessToken, conversationId).catch(() => {});
+        if (shouldEndConversation && conversationId) {
+          await endConversation(this.endpoints, conversationId).catch(() => {});
         }
       })
       .finally(() => {

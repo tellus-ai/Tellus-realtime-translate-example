@@ -6,12 +6,14 @@ export type ResultEventType =
   | 'translation.preview'
   | 'translation.final';
 
+/** One row update. A Result message carries one or more of them. */
 export interface ResultEvent {
   conversationId: string;
   eventType: ResultEventType;
   orderSeq: number;
   text: string;
-  sourceLanguage: string;
+  /** Null when the server does not know the language. */
+  sourceLanguage: string | null;
   targetLanguage: string | null;
 }
 
@@ -22,7 +24,7 @@ export interface TranslationText {
 
 export interface TranslationRow {
   orderSeq: number;
-  sourceLanguage: string;
+  sourceLanguage: string | null;
   source: TranslationText | null;
   translations: Record<string, TranslationText>;
 }

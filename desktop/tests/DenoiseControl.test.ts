@@ -38,7 +38,7 @@ describe('denoise controls', () => {
 
 const screen = vi.hoisted(() => ({ phase: 'idle' }));
 vi.mock('../src/config/realtimeSpeechConfig', () => ({ realtimeSpeechConfig: {
-  audioSdkEnabled: true, accessToken: 'token', accessTokenConfigured: true,
+  audioSdkEnabled: true, apiServerConfigured: true,
 } }));
 vi.mock('../src/hooks/useRealtimeTranslation', () => ({ useRealtimeTranslation: () => ({
   phase: screen.phase, audioSdkReady: false, rows: [], error: null,

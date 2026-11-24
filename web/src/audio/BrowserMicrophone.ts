@@ -1,4 +1,4 @@
-import type { AudioEngine, AudioCapture, AudioChunk } from '@tellus-ai/audio-sdk-web';
+import type { AudioCaptureConfig, AudioEngine, AudioCapture, AudioChunk } from '@tellus-ai/audio-sdk-web';
 import { attachEngineAuthorization, type EngineAuthorizationController } from '@tellus-ai/audio-sdk-web/authorization';
 import { browserEngineAssets } from '../config/browserEngineAssets';
 
@@ -7,13 +7,27 @@ export interface MicrophoneRecorder {
   readonly denoiseEnabled: boolean;
   setDenoiseEnabled(enabled: boolean): Promise<boolean>;
   prepare(clientVad: boolean): Promise<void>;
-  authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void>;
+  /** `getAccessToken` is called for the first approval and again for every renewal. */
+  authorize(socket: WebSocket, conversationId: string, getAccessToken: () => Promise<string>, onError: (error: Error) => void): Promise<void>;
   releaseAuthorization(): void;
   start(onFrame: (frame: AudioChunk) => void, onError: (error: Error) => void): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
   stop(): Promise<void>;
 }
+
+// Denoise starts off. When it is turned on, it runs in close_talk mode: a near-speech gate turns sound
+// that is not close to the microphone into silence (about 330 ms more delay, attenuation capped).
+// The values are the engine defaults (SDK 0.3.13 / engine 0.4.13), written out so they can be tuned.
+export const DENOISE_SETTINGS = {
+  denoiseMode: 'close_talk',
+  closeTalkThresholdDb: 30,
+  denoiseAttenuationLimitDb: 12,
+  closeTalkHoldMs: 250,
+  closeTalkKeepGapDb: 4,
+  closeTalkLevelMarginDb: 2,
+  closeTalkLevelMinDbfs: -20,
+} as const satisfies AudioCaptureConfig;
 
 /** OS 입력·DSP·VAD·codec을 공통 SDK capture에 위임한다. */
 export class BrowserMicrophone implements MicrophoneRecorder {
@@ -47,7 +61,7 @@ export class BrowserMicrophone implements MicrophoneRecorder {
       const engine = await AudioEngine.init({
         micEnabled: true, processing: { sampleRate: 16000, chunkDurationMs: 20 },
         transport: { codec: 'opus', bitrateBps: 64000 },
-        vadEnabled: false, denoiseEnabled: this.denoise,
+        vadEnabled: false, denoiseEnabled: this.denoise, ...DENOISE_SETTINGS,
         echoCancellationEnabled: true, micAgc2Enabled: false,
       }, browserEngineAssets(false));
       if (generation !== this.generation) {
@@ -64,10 +78,10 @@ export class BrowserMicrophone implements MicrophoneRecorder {
     }
   }
 
-  async authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void> {
+  async authorize(socket: WebSocket, conversationId: string, getAccessToken: () => Promise<string>, onError: (error: Error) => void): Promise<void> {
     if (!this.capture) throw new Error('Audio capture is unavailable.');
     this.authorization = attachEngineAuthorization(socket, this.capture, {
-      conversationId, getAccessToken: () => accessToken, onError,
+      conversationId, getAccessToken, onError,
     });
     await this.authorization.ready;
   }

@@ -7,11 +7,7 @@ import type { StartConversationInput } from '../api/conversationApi';
 
 export function useRealtimeTranslation() {
   const session = useMemo(
-    () => new RealtimeTranslationSession(
-      realtimeSpeechConfig,
-      new BrowserMicrophone(),
-      realtimeSpeechConfig.accessToken,
-    ),
+    () => new RealtimeTranslationSession(realtimeSpeechConfig, new BrowserMicrophone()),
     [],
   );
   const snapshot = useSyncExternalStore(

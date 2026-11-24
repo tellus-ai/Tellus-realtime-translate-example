@@ -18,7 +18,7 @@ if ! awk -F= '
   }
   END { exit found ? 0 : 1 }
 ' .env; then
-  echo "오류: .env의 API_KEY에 access token을 설정해주세요." >&2
+  echo "오류: .env의 API_KEY에 API 키를 설정해주세요. 개발 서버만 읽고 앱에는 들어가지 않습니다." >&2
   exit 1
 fi
 

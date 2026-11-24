@@ -2,59 +2,67 @@ import WebSocket from 'ws';
 
 const httpBaseUrl = requiredEnvironment('REALTIME_SPEECH_HTTP_URL').replace(/\/+$/, '');
 const websocketBaseUrl = requiredEnvironment('REALTIME_SPEECH_WS_URL').replace(/\/+$/, '');
-const accessToken = requiredEnvironment('API_KEY');
-// The app connects from the Electron main process, which sends no Origin header.
+const apiKey = requiredEnvironment('API_KEY');
+// This script stands in for both the example API server (it holds the API key for the REST calls)
+// and the app (it connects with the access token, from Node.js, without an Origin header).
 // Set SMOKE_ORIGIN to check how the server treats a browser origin instead.
 const origin = process.env.SMOKE_ORIGIN;
 
 let conversationId = null;
+let accessToken = null;
 let resultSocket = null;
 let audioSocket = null;
 
 try {
-  console.log('1/6 health 확인');
+  console.log('1/7 health 확인');
   await requestJson('/health', { authenticated: false });
 
-  console.log('2/6 Conversation 생성');
-  const conversation = await requestJson('/conversations', {
-    body: {
-      max_concurrent_viewers: 10,
-      conversation_audio_mode: 'single_speaker',
-    },
-  });
+  console.log('2/7 Conversation 생성');
+  // 본문 없이 만든다. 설정은 다음 호출에서 저장한다.
+  const conversation = await requestJson('/v1/conversations', { method: 'POST' });
   conversationId = readConversationId(conversation);
 
-  console.log('3/6 번역 설정 저장');
-  await requestJson(`/conversations/${encodeURIComponent(conversationId)}/interpretation-settings`, {
+  console.log('3/7 번역 설정 저장');
+  await requestJson(`/v1/conversations/${encodeURIComponent(conversationId)}/settings`, {
     body: {
       languages: ['ko-KR', 'en-US'],
       transcription: { client_vad: false },
-      translation: {},
     },
   });
 
-  console.log('4/6 Result WebSocket 연결');
+  // 앱처럼 입장권으로 두 WebSocket을 연다. API 키는 REST 호출에만 쓴다.
+  console.log('4/7 입장권 발급');
+  const issued = await requestJson('/v1/access-tokens', {
+    body: { session_kind: 'conversation', session_id: conversationId },
+  });
+  if (typeof issued?.access_token !== 'string' || !issued.access_token) throw new Error('응답에 access_token이 없습니다.');
+  accessToken = issued.access_token;
+
+  console.log('5/7 Result WebSocket 연결');
   resultSocket = createSocket(
-    `${websocketBaseUrl}/conversations/${encodeURIComponent(conversationId)}/results`,
+    `${websocketBaseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/results`,
   );
-  const resultReady = waitForResultReady(resultSocket);
-  await waitForOpen(resultSocket);
-  await resultReady;
+  // /v1 연결은 ready 메시지를 보내지 않는다. 서버는 연결을 받은 직후에도 거절할 수 있으므로
+  // 열린 뒤 잠시 동안 system.error나 close가 오지 않는지 확인한다.
+  await Promise.all([waitForOpen(resultSocket), waitForAcceptance(resultSocket, 'Result')]);
 
-  console.log('5/6 Audio WebSocket 연결 및 PCM16 전송');
+  console.log('6/7 Audio WebSocket 연결 및 PCM16 전송');
   audioSocket = createSocket(
-    `${websocketBaseUrl}/audio?conversation_id=${encodeURIComponent(conversationId)}&audio_format=pcm16`,
+    `${websocketBaseUrl}/v1/audio?conversation_id=${encodeURIComponent(conversationId)}&audio_format=pcm16`,
   );
-  await waitForOpen(audioSocket);
-  await sendSilence(audioSocket);
+  const socket = audioSocket;
+  await Promise.all([
+    waitForOpen(socket).then(() => sendSilence(socket)),
+    waitForAcceptance(socket, 'Audio'),
+  ]);
 
-  console.log('6/6 원격 연결 smoke 성공');
+  console.log('7/7 원격 연결 smoke 성공');
 } finally {
   closeSocket(audioSocket);
   closeSocket(resultSocket);
   if (conversationId !== null) {
     console.log('정리: 테스트 Conversation 종료');
-    await requestJson(`/conversations/${encodeURIComponent(conversationId)}/end`, { method: 'POST' });
+    await requestJson(`/v1/conversations/${encodeURIComponent(conversationId)}/end`, { method: 'POST' });
   }
 }
 
@@ -66,7 +74,7 @@ function requiredEnvironment(name) {
 
 async function requestJson(path, options = {}) {
   const headers = { 'Content-Type': 'application/json' };
-  if (options.authenticated !== false) headers.Authorization = `Bearer ${accessToken}`;
+  if (options.authenticated !== false) headers.Authorization = `Bearer ${apiKey}`;
   const response = await fetch(`${httpBaseUrl}${path}`, {
     method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
     headers,
@@ -90,7 +98,9 @@ function unwrapEnvelope(body) {
 function readPublicMessage(body) {
   if (!body || typeof body !== 'object') return typeof body === 'string' ? body : '';
   if (Array.isArray(body.message)) return body.message.find((item) => typeof item === 'string') || '';
-  return typeof body.message === 'string' ? body.message : '';
+  if (typeof body.message === 'string') return body.message;
+  // POST /v1/access-tokens는 오류를 {"detail": "..."}로 돌려준다.
+  return typeof body.detail === 'string' ? body.detail : '';
 }
 
 function readConversationId(body) {
@@ -99,8 +109,11 @@ function readConversationId(body) {
   return value;
 }
 
+// /v1 WebSocket은 자격 증명이 필요하다. 앱처럼 입장권을 URL이 아니라 handshake 헤더로 보낸다.
 function createSocket(url) {
-  return origin ? new WebSocket(url, { headers: { Origin: origin } }) : new WebSocket(url);
+  return new WebSocket(url, {
+    headers: { Authorization: `Bearer ${accessToken}`, ...(origin ? { Origin: origin } : {}) },
+  });
 }
 
 function waitForOpen(socket) {
@@ -117,18 +130,22 @@ function waitForOpen(socket) {
   });
 }
 
-function waitForResultReady(socket) {
+/** 연결이 열린 뒤 1초 동안 서버가 거절하지 않으면 받아들인 것으로 본다. */
+function waitForAcceptance(socket, name) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('participants.snapshot timeout')), 10_000);
-    socket.on('message', (data) => {
+    let timeout = null;
+    const fail = (message) => { clearTimeout(timeout); reject(new Error(`${name} WebSocket ${message}`)); };
+    socket.once('open', () => { timeout = setTimeout(resolve, 1_000); });
+    socket.on('close', (code, reason) => fail(`closed: ${code} ${reason.toString()}`));
+    socket.on('message', (data, isBinary) => {
+      if (isBinary) return;
       let payload;
       try { payload = JSON.parse(data.toString()); } catch { return; }
       if (payload?.type === 'system.error') {
-        clearTimeout(timeout);
-        reject(new Error(readPublicMessage(payload) || 'Result WebSocket system.error'));
-      } else if (payload?.type === 'participants.snapshot') {
-        clearTimeout(timeout);
-        resolve();
+        fail(`system.error: ${readPublicMessage(payload)} (${payload.data?.reason ?? 'no reason'})`);
+      } else if (payload?.type === 'result' || payload?.type === 'participants.snapshot') {
+        // 버전 없는 /conversations 경로의 메시지 모양이다. /v1 연결에는 오지 않아야 한다.
+        fail(`sent a message of the unversioned routes: ${payload.type}`);
       }
     });
   });

@@ -2,10 +2,15 @@ import type { MicrophoneRecorder } from '../src/audio/NativeMicrophone';
 import type { AudioChunk } from '@tellus-ai/audio-sdk-mobile';
 import { RealtimeTranslationSession } from '../src/realtime/RealtimeTranslationSession';
 
-const endpoints = { httpBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test', appOrigin: 'https://app.example.test' };
-const END_PATH = '/conversations/conversation-1/end';
-const SETTINGS_PATH = '/conversations/conversation-1/interpretation-settings';
+const endpoints = { apiBaseUrl: 'https://example.test', websocketBaseUrl: 'wss://example.test', appOrigin: 'https://app.example.test' };
+const END_PATH = '/v1/conversations/conversation-1/end';
+const SETTINGS_PATH = '/v1/conversations/conversation-1/settings';
+const TOKEN_PATH = '/v1/access-tokens';
+const TOKEN_LIFETIME_MS = 15 * 60_000;
 const NO_ANSWER = 'no answer';
+const NETWORK_FAILURE = 'network failure';
+/** A 201 whose body has no token. */
+const MALFORMED_TOKEN = 'malformed token';
 const ENDED_BY_SERVER = { phase: 'ended', error: null };
 
 /** What the client sent, closed, and requested, in the order it happened. */
@@ -21,6 +26,9 @@ const server = {
   /** Whether a successful `POST /end` is followed by `conversation.ended` and 1000 on Result. */
   sendsEnded: true,
   settingsStatus: 200,
+  /** Answers for the next `POST /v1/access-tokens` calls; a new token once the list is empty. */
+  tokenReplies: [] as Array<number | typeof NETWORK_FAILURE | typeof MALFORMED_TOKEN>,
+  tokensIssued: 0,
 };
 
 function gate(): { opened: Promise<void>; open: () => void } {
@@ -47,11 +55,16 @@ class FakeMicrophone implements MicrophoneRecorder {
   private vad = false;
   private gateOpen = false;
   async prepare(vad: boolean): Promise<void> { if (this.prepareError) throw this.prepareError; this.vad = vad; }
-  async authorize(socket: WebSocket): Promise<void> {
+  /** The credential that the engine approval sent on `/v1/audio`, and how it gets the next one. */
+  authorizedWith: string | null = null;
+  getAccessToken: (() => Promise<string>) | null = null;
+  async authorize(socket: WebSocket, _conversationId: string, getAccessToken: () => Promise<string>): Promise<void> {
+    this.getAccessToken = getAccessToken;
     if (socket.readyState !== WebSocket.OPEN) await new Promise<void>(resolve => {
       const opened = socket.onopen;
       socket.onopen = event => { opened?.call(socket, event); resolve(); };
     });
+    this.authorizedWith = await getAccessToken();
     await this.authorizationGate;
     this.gateOpen = false;
   }
@@ -107,16 +120,12 @@ class FakeSocket {
   onmessage: ((event: { data: string }) => void) | null = null;
 
   constructor(readonly url: string, _protocols: null, readonly options: { headers: Record<string, string> }) {
-    this.kind = url.includes('/audio?') ? 'audio' : 'result';
+    this.kind = url.includes('/v1/audio?') ? 'audio' : 'result';
     FakeSocket.instances.push(this);
     queueMicrotask(() => FakeSocket.onConnect(this));
   }
 
-  /** The server accepts the connection. Result then sends its ready message. */
-  accept(): void {
-    this.open();
-    if (this.kind === 'result') this.receive({ type: 'participants.snapshot', data: {} });
-  }
+  /** The server accepts the connection. Neither socket sends a ready message. */
   open(): void {
     this.readyState = FakeSocket.OPEN;
     this.onopen?.();
@@ -157,10 +166,20 @@ function reply(status: number, data: unknown = {}, message = 'ok'): Response {
 }
 
 async function fakeFetch(url: string, init: RequestInit): Promise<Response> {
-  const path = url.replace(endpoints.httpBaseUrl, '').split('?')[0];
+  const path = url.replace(endpoints.apiBaseUrl, '').split('?')[0];
   server.requests.push(`${init.method} ${path}`);
   timeline.push(`${init.method} ${path}`);
-  if (path === '/conversations') return reply(200, { conversation_id: 'conversation-1' });
+  if (path === '/v1/conversations') return reply(201, { conversation_id: 'conversation-1' });
+  if (path === TOKEN_PATH) {
+    const status = server.tokenReplies.shift() ?? 201;
+    if (status === NETWORK_FAILURE) throw new TypeError('Network request failed');
+    if (status === MALFORMED_TOKEN) return { ok: true, status: 201, text: async () => '{}' } as Response;
+    // This route answers without the common envelope.
+    const body = status === 201
+      ? { access_token: `token-${server.tokensIssued += 1}`, expires_at_ms: Date.now() + TOKEN_LIFETIME_MS }
+      : { detail: `Token refused with ${status}.` };
+    return { ok: status < 300, status, text: async () => JSON.stringify(body) } as Response;
+  }
   if (path === SETTINGS_PATH && server.settingsStatus !== 200) return reply(server.settingsStatus, null, 'Permission denied.');
   if (path === END_PATH) {
     const status = server.endStatuses.shift() ?? 200;
@@ -183,18 +202,32 @@ function systemError(code: number, reason: string, message: string, data: object
   return { type: 'system.error', statusCode: String(code), message: [message], data: { reason, ...data } };
 }
 
+/** A result message with one item. A preview carries `order_seq` in `data`, a final in the item. */
 function result(eventType: string, orderSeq: number, text: string, targetLanguage: string | null = null) {
+  const isTranscript = eventType.startsWith('transcript.');
+  const isFinal = eventType.endsWith('.final');
+  const item = {
+    ...(isFinal ? { order_seq: orderSeq } : {}),
+    [isTranscript ? 'transcript' : 'translation']: text,
+    source_language: 'ko-KR',
+    ...(isTranscript ? {} : { target_language: targetLanguage }),
+    speaker_id: '1',
+    start_ms: 0,
+    end_ms: 480,
+  };
   return {
-    type: 'result',
-    statusCode: '200',
-    message: ['ok'],
-    data: { conversation_id: 'conversation-1', event_type: eventType, order_seq: orderSeq, text, source_language: 'ko-KR', target_language: targetLanguage },
+    type: eventType,
+    data: {
+      conversation_id: 'conversation-1',
+      ...(isFinal ? {} : { order_seq: orderSeq }),
+      [isTranscript ? 'utterances' : 'translations']: [item],
+    },
   };
 }
 
 function createSession() {
   const microphone = new FakeMicrophone();
-  const session = new RealtimeTranslationSession(endpoints, microphone, 'token');
+  const session = new RealtimeTranslationSession(endpoints, microphone);
   return { session, microphone };
 }
 
@@ -208,6 +241,7 @@ async function startSession(clientVad = false) {
 /** Runs everything that is ready to run without moving the clock. */
 const flush = () => jest.advanceTimersByTimeAsync(0);
 const endRequests = () => server.requests.filter((request) => request === `POST ${END_PATH}`);
+const tokenRequests = () => server.requests.filter((request) => request === `POST ${TOKEN_PATH}`);
 const socketKinds = () => FakeSocket.instances.map((socket) => socket.kind);
 const latest = () => FakeSocket.instances.at(-1)!;
 
@@ -228,9 +262,9 @@ beforeEach(() => {
   // The fake socket connects in a microtask, like a promise, not on the fake clock.
   jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] });
   timeline = [];
-  Object.assign(server, { requests: [], endStatuses: [], endGate: Promise.resolve(), sendsEnded: true, settingsStatus: 200 });
+  Object.assign(server, { requests: [], endStatuses: [], endGate: Promise.resolve(), sendsEnded: true, settingsStatus: 200, tokenReplies: [], tokensIssued: 0 });
   FakeSocket.instances = [];
-  FakeSocket.onConnect = (socket) => socket.accept();
+  FakeSocket.onConnect = (socket) => socket.open();
   globalThis.fetch = fakeFetch as typeof fetch;
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
 });
@@ -239,6 +273,107 @@ afterEach(() => {
   jest.useRealTimers();
   globalThis.fetch = originalFetch;
   globalThis.WebSocket = originalWebSocket;
+});
+
+describe('RealtimeTranslationSession access tokens', () => {
+  it('holds no API key: the REST calls go to this app\'s server without a credential', async () => {
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    await startSession();
+    expect(fetchSpy.mock.calls).toHaveLength(3);
+    for (const [url, init] of fetchSpy.mock.calls) {
+      expect(String(url).startsWith(`${endpoints.apiBaseUrl}/v1/`)).toBe(true);
+      // The server adds the key. The header only shows that this app sent the request.
+      expect(init?.headers).toEqual({ 'Content-Type': 'application/json', 'X-Tellus-Example-Api': '1' });
+    }
+    const tokenCall = fetchSpy.mock.calls.find(([url]) => String(url).endsWith(TOKEN_PATH));
+    expect(JSON.parse(String(tokenCall?.[1]?.body))).toEqual({ session_kind: 'conversation', session_id: 'conversation-1' });
+  });
+
+  it('fails Start without a request when neither the Expo dev server nor TELLUS_EXAMPLE_API_URL is known', async () => {
+    const session = new RealtimeTranslationSession({ ...endpoints, apiBaseUrl: '' }, new FakeMicrophone());
+    await expect(session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false }))
+      .rejects.toThrow('Set TELLUS_EXAMPLE_API_URL in mobile/.env, or run the app from the Expo development server.');
+    expect(server.requests).toEqual([]);
+  });
+
+  it('reuses the token for a reconnect and for an engine renewal while it is valid', async () => {
+    const { microphone, audioSocket } = await startSession();
+    await jest.advanceTimersByTimeAsync(9 * 60_000);
+    await expect(microphone.getAccessToken?.()).resolves.toBe('token-1');
+    audioSocket.serverClose(1006);
+    expect((await reopenedAfter(1_000)).options.headers.Authorization).toBe('Bearer token-1');
+    expect(tokenRequests()).toHaveLength(1);
+  });
+
+  it('issues a new token for a reconnect and for an engine renewal once the first is about to expire', async () => {
+    const { session, microphone, audioSocket } = await startSession();
+    await jest.advanceTimersByTimeAsync(TOKEN_LIFETIME_MS - 60_000);
+    await expect(microphone.getAccessToken?.()).resolves.toBe('token-2');
+    await jest.advanceTimersByTimeAsync(TOKEN_LIFETIME_MS);
+    audioSocket.serverClose(1006);
+    expect((await reopenedAfter(1_000)).options.headers.Authorization).toBe('Bearer token-3');
+    expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
+  });
+
+  it('fails the start and ends the Conversation when no token is issued', async () => {
+    server.tokenReplies = [401];
+    const { session } = createSession();
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    await flush();
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'Token refused with 401.' });
+    expect(FakeSocket.instances).toEqual([]);
+    expect(endRequests()).toHaveLength(1);
+  });
+
+  describe('when the token for a reconnect cannot be issued', () => {
+    async function reconnectWithExpiredToken(...replies: typeof server.tokenReplies) {
+      const started = await startSession();
+      await jest.advanceTimersByTimeAsync(TOKEN_LIFETIME_MS);
+      server.tokenReplies = replies;
+      started.audioSocket.serverClose(1006);
+      await jest.advanceTimersByTimeAsync(1_000);
+      return started;
+    }
+
+    it.each([404, 410])('shows the Conversation as ended, without POST /end, after %i', async (status) => {
+      const { session } = await reconnectWithExpiredToken(status);
+      expect(session.getSnapshot()).toMatchObject(ENDED_BY_SERVER);
+      expect(endRequests()).toEqual([]);
+      expect(socketKinds()).toEqual(['result', 'audio']);
+    });
+
+    it('stops with the server message after 401', async () => {
+      const { session } = await reconnectWithExpiredToken(401);
+      expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'Token refused with 401.' });
+      expect(endRequests()).toHaveLength(1);
+    });
+
+    // Asking again would get the same answer, so the session stops instead of retrying forever.
+    it('stops when the answer has no token', async () => {
+      const { session } = await reconnectWithExpiredToken(MALFORMED_TOKEN);
+      expect(session.getSnapshot()).toMatchObject({
+        phase: 'error',
+        error: 'Access token response is missing access_token or expires_at_ms.',
+      });
+      expect(socketKinds()).toEqual(['result', 'audio']);
+    });
+
+    // 504: this app's server asked Tellus and got no answer in time.
+    it.each([
+      ['the request gets no response', NETWORK_FAILURE],
+      ['this app\'s server answers 504', 504],
+    ] as const)('keeps reconnecting with backoff when %s', async (_name, failure) => {
+      // The request itself is repeated after 1, 2, and 5 seconds before the attempt gives up.
+      const failures = Array<typeof failure>(4).fill(failure);
+      const { session } = await reconnectWithExpiredToken(...failures);
+      await jest.advanceTimersByTimeAsync(8_000);
+      expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', error: null });
+      expect(socketKinds()).toEqual(['result', 'audio']);
+
+      await reopenedAfter(2_000);
+      expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
+    });
+  });
 });
 
 describe('RealtimeTranslationSession when the Conversation ends on the server', () => {
@@ -291,7 +426,7 @@ describe('RealtimeTranslationSession when the Conversation ends on the server', 
 describe('RealtimeTranslationSession when a Result message is not valid', () => {
   it('shows the problem and goes on', async () => {
     const { session, microphone, resultSocket, audioSocket } = await startSession();
-    resultSocket.receive({ type: 'result', data: { event_type: 'transcript.final' } });
+    resultSocket.receive({ type: 'transcript.final', data: { conversation_id: 'conversation-1' } });
     expect(session.getSnapshot()).toMatchObject({
       phase: 'recording',
       error: 'Invalid Result WebSocket payload.',
@@ -347,6 +482,51 @@ describe('RealtimeTranslationSession when the server refuses a socket', () => {
     await session.stop();
     expect(session.getSnapshot().phase).toBe('error');
     expect(endRequests()).toEqual([]);
+  });
+});
+
+describe('RealtimeTranslationSession when the server refuses a socket for this client', () => {
+  it('stops but leaves the Conversation open after 1008 results_connection_replaced', async () => {
+    const { session, resultSocket } = await startSession();
+    resultSocket.receive(systemError(1008, 'results_connection_replaced', 'Results connection replaced.'));
+    resultSocket.serverClose(1008, 'results_connection_replaced');
+    await flush();
+
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'error',
+      error: 'Another device or tab took over the results of this Conversation.',
+    });
+    await session.stop();
+    expect(endRequests()).toEqual([]);
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(socketKinds()).toEqual(['result', 'audio']);
+  });
+
+  it.each(['result', 'audio'] as const)('stops without reconnecting when %s closes with 4401', async (kind) => {
+    const { session, resultSocket, audioSocket } = await startSession();
+    (kind === 'result' ? resultSocket : audioSocket).serverClose(4401, 'API key expired');
+    await flush();
+
+    expect(session.getSnapshot()).toMatchObject({
+      phase: 'error',
+      error: 'The server no longer accepts the API key. (API key expired)',
+    });
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(socketKinds()).toEqual(['result', 'audio']);
+  });
+
+  it('shows the server message after 1008 auth_failed, which rejects the handshake credential', async () => {
+    FakeSocket.onConnect = (socket) => {
+      socket.open();
+      socket.receive(systemError(1008, 'auth_failed', 'Authentication failed.'));
+      socket.serverClose(1008, 'auth_failed');
+    };
+    const { session } = createSession();
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    await flush();
+
+    expect(session.getSnapshot()).toMatchObject({ phase: 'error', error: 'Authentication failed. (auth_failed)' });
+    expect(socketKinds()).toEqual(['result']);
   });
 });
 
@@ -455,9 +635,13 @@ describe('RealtimeTranslationSession reconnects', () => {
     await reopenedAfter(2_000);
   });
 
-  it('keeps sending audio while only Result reconnects, and shows only later results', async () => {
+  it('keeps sending audio while only Result reconnects, and asks for the finals it has not handled', async () => {
     const { session, microphone, resultSocket, audioSocket } = await startSession();
+    expect(resultSocket.url).toBe('wss://example.test/v1/conversations/conversation-1/results');
     resultSocket.receive(result('transcript.final', 0, '안녕하세요.'));
+    resultSocket.receive(result('translation.final', 0, 'Hello.', 'en-US'));
+    // The translation of this one was not received before the close.
+    resultSocket.receive(result('transcript.final', 1, '반갑습니다.'));
     resultSocket.serverClose(1013, 'result_send_failed');
     await flush();
     expect(session.getSnapshot()).toMatchObject({
@@ -479,11 +663,15 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(audioSocket.detached).toBe(false);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', resultConnection: 'open' });
 
-    // What the server sent during the gap is not recovered: the earlier row stays as it was.
+    // Row 0 is complete, so the server sends the stored finals after it again, then live results.
+    expect(reopened.url).toBe('wss://example.test/v1/conversations/conversation-1/results?after_order_seq=0');
+    reopened.receive(result('transcript.final', 1, '반갑습니다.'));
+    reopened.receive(result('translation.final', 1, 'Nice to meet you.', 'en-US'));
     reopened.receive(result('transcript.final', 2, '다시 연결됐습니다.'));
     await jest.advanceTimersByTimeAsync(10_000);
     expect(session.getSnapshot().rows).toMatchObject([
-      { orderSeq: 0, source: { text: '안녕하세요.', isFinal: true }, translations: {} },
+      { orderSeq: 0, source: { text: '안녕하세요.', isFinal: true } },
+      { orderSeq: 1, source: { text: '반갑습니다.', isFinal: true }, translations: { 'en-US': { text: 'Nice to meet you.' } } },
       { orderSeq: 2, source: { text: '다시 연결됐습니다.', isFinal: true } },
     ]);
     expect(server.requests).toEqual(requestsBeforeReconnect);
@@ -539,7 +727,7 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(endRequests()).toHaveLength(1);
   });
 
-  it('opens Result first when both sockets closed, and /audio only after Result is ready', async () => {
+  it('opens Result first when both sockets closed, and /audio only after Result is open', async () => {
     const { session, resultSocket, audioSocket } = await startSession();
     FakeSocket.onConnect = () => {};
     resultSocket.serverClose(1006);
@@ -548,16 +736,15 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', resultConnection: 'closed', audioConnection: 'closed' });
 
     const reopenedResult = await reopenedAfter(1_000);
-    reopenedResult.open();
-    await flush();
+    await jest.advanceTimersByTimeAsync(5_000);
     expect(socketKinds()).toEqual(['result', 'audio', 'result']);
 
-    reopenedResult.receive({ type: 'participants.snapshot', data: {} });
+    reopenedResult.open();
     await flush();
     expect(socketKinds()).toEqual(['result', 'audio', 'result', 'audio']);
     expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', resultConnection: 'open' });
 
-    latest().accept();
+    latest().open();
     await flush();
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioConnection: 'open' });
   });
@@ -584,12 +771,12 @@ describe('RealtimeTranslationSession reconnects', () => {
     const reason = 'audio_pipeline_activation_rate_limited';
     audioSocket.receive(systemError(1013, reason, 'Audio pipeline reconnect rate limit exceeded.', { retry_after_ms: 3_000 }));
     audioSocket.serverClose(1013, reason);
-    reopenedResult.accept();
+    reopenedResult.open();
     await flush();
     expect(socketKinds()).toEqual(['result', 'audio', 'result']);
     expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', resultConnection: 'open' });
 
-    (await reopenedAfter(3_000)).accept();
+    (await reopenedAfter(3_000)).open();
     await flush();
     expect(socketKinds()).toEqual(['result', 'audio', 'result', 'audio']);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording' });
@@ -606,9 +793,9 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(socketKinds()).toEqual(['result', 'audio', 'result']);
     expect(opening.detached).toBe(false);
 
-    opening.accept();
+    opening.open();
     await flush();
-    latest().accept();
+    latest().open();
     await flush();
     expect(socketKinds()).toEqual(['result', 'audio', 'result', 'audio']);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording' });
@@ -618,7 +805,7 @@ describe('RealtimeTranslationSession reconnects', () => {
     const { session, microphone, audioSocket } = await startSession();
     const reason = 'audio_pipeline_activation_rate_limited';
     FakeSocket.onConnect = (socket) => {
-      socket.accept();
+      socket.open();
       socket.receive(systemError(1013, reason, 'Audio pipeline reconnect rate limit exceeded.', { retry_after_ms: 800 }));
       socket.serverClose(1013, reason);
     };
@@ -631,16 +818,16 @@ describe('RealtimeTranslationSession reconnects', () => {
     });
     expect(microphone.capturing).toBe(false);
 
-    FakeSocket.onConnect = (socket) => socket.accept();
+    FakeSocket.onConnect = (socket) => socket.open();
     await reopenedAfter(2_000);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording' });
     expect(microphone.capturing).toBe(true);
   });
 
-  it('keeps reconnecting when the new Result socket becomes ready and closes in the same tick', async () => {
+  it('keeps reconnecting when the new Result socket opens and closes in the same tick', async () => {
     const { session, microphone, resultSocket } = await startSession();
     FakeSocket.onConnect = (socket) => {
-      socket.accept();
+      socket.open();
       socket.serverClose(1013, 'result_send_failed');
     };
     resultSocket.serverClose(1006);
@@ -653,7 +840,7 @@ describe('RealtimeTranslationSession reconnects', () => {
     });
     expect(microphone.capturing).toBe(true);
 
-    FakeSocket.onConnect = (socket) => socket.accept();
+    FakeSocket.onConnect = (socket) => socket.open();
     await reopenedAfter(2_000);
     expect(socketKinds()).toEqual(['result', 'audio', 'result', 'result']);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', resultConnection: 'open' });
@@ -745,7 +932,7 @@ describe('RealtimeTranslationSession reconnects', () => {
     expect(stalled.detached).toBe(true);
     expect(session.getSnapshot()).toMatchObject({ phase: 'reconnecting', audioConnection: 'closed' });
 
-    FakeSocket.onConnect = (socket) => socket.accept();
+    FakeSocket.onConnect = (socket) => socket.open();
     await reopenedAfter(2_000);
     stalled.serverClose(1008, 'audio_pipeline_fenced');
     await flush();
@@ -770,12 +957,25 @@ describe('RealtimeTranslationSession reconnects', () => {
 });
 
 describe('RealtimeTranslationSession on React Native sockets', () => {
-  it('opens both sockets with the Origin header', async () => {
+  it('opens both /v1 sockets with the Origin header and the access token in the Authorization header', async () => {
     await startSession();
-    expect(FakeSocket.instances.map((socket) => socket.options)).toEqual([
-      { headers: { Origin: 'https://app.example.test' } },
-      { headers: { Origin: 'https://app.example.test' } },
+    const headers = { Origin: 'https://app.example.test', Authorization: 'Bearer token-1' };
+    expect(FakeSocket.instances.map((socket) => socket.options)).toEqual([{ headers }, { headers }]);
+    // The token goes in a header, so no credential is in a URL.
+    expect(FakeSocket.instances.map((socket) => socket.url)).toEqual([
+      'wss://example.test/v1/conversations/conversation-1/results',
+      'wss://example.test/v1/audio?conversation_id=conversation-1&audio_format=opus',
     ]);
+    expect(server.requests).toEqual(['POST /v1/conversations', `POST ${SETTINGS_PATH}`, `POST ${TOKEN_PATH}`]);
+  });
+
+  it('sends the same headers again when a socket is reopened while the token is valid', async () => {
+    const { audioSocket } = await startSession();
+    audioSocket.serverClose(1006);
+    const reopened = await reopenedAfter(1_000);
+    expect(reopened.options).toEqual({ headers: { Origin: 'https://app.example.test', Authorization: 'Bearer token-1' } });
+    expect(reopened.url).not.toContain('token');
+    expect(tokenRequests()).toHaveLength(1);
   });
 
   const closesWithoutCode: Array<[string, { code?: number; reason?: string }]> = [
@@ -828,7 +1028,7 @@ describe('RealtimeTranslationSession while starting', () => {
 
   it.each([1001, 1006])('shows the server authorization reason when the native audio socket closes with %i', async (code) => {
     FakeSocket.onConnect = (socket) => {
-      socket.accept();
+      socket.open();
       if (socket.kind !== 'audio') return;
       socket.receive(systemError(1008, 'engine_authentication_invalid', 'engine_authentication_invalid'));
       socket.serverClose(code, 'Stream end encountered');
@@ -851,7 +1051,7 @@ describe('RealtimeTranslationSession while starting', () => {
 
   it('fails the start with the server message when /audio is accepted and then refused', async () => {
     FakeSocket.onConnect = (socket) => {
-      socket.accept();
+      socket.open();
       if (socket.kind !== 'audio') return;
       socket.receive(systemError(1008, 'interpretation_settings_not_found', 'Interpretation settings were not found.'));
       socket.serverClose(1008, 'interpretation_settings_not_found');
@@ -874,7 +1074,7 @@ describe('RealtimeTranslationSession while starting', () => {
 
   it('fails the start instead of reconnecting when Result closes while /audio is opening', async () => {
     FakeSocket.onConnect = (socket) => {
-      if (socket.kind === 'result') socket.accept();
+      if (socket.kind === 'result') socket.open();
       else FakeSocket.instances[0]!.serverClose(1011, 'internal_error');
     };
     const { session } = createSession();
@@ -909,12 +1109,12 @@ describe('RealtimeTranslationSession while starting', () => {
     expect(socketKinds()).toEqual(['result']);
   });
 
-  it('fails the start when Result does not become ready within 10 seconds', async () => {
-    FakeSocket.onConnect = (socket) => socket.open();
+  it('fails the start when Result does not open within 10 seconds', async () => {
+    FakeSocket.onConnect = () => {};
     const { session } = createSession();
     const started = start(session);
     await jest.advanceTimersByTimeAsync(9_999);
-    expect(session.getSnapshot()).toMatchObject({ phase: 'connecting', resultConnection: 'open' });
+    expect(session.getSnapshot()).toMatchObject({ phase: 'connecting', resultConnection: 'connecting' });
     await jest.advanceTimersByTimeAsync(1);
     await started;
 
@@ -1169,6 +1369,8 @@ test('permit과 모델키 준비 완료 후 마이크를 시작한다', async ()
   expect(session.getSnapshot().audioConnection).toBe('open');
   expect(session.getSnapshot().phase).toBe('connecting');
   expect(microphone.capturing).toBe(false);
+  // /v1/audio의 엔진 승인도 앱 서버가 발급한 입장권을 쓴다. 앱에는 API 키가 없다.
+  expect(microphone.authorizedWith).toBe('token-1');
   held.open();
   await starting;
   expect(microphone.capturing).toBe(true);
@@ -1183,7 +1385,7 @@ describe('Audio SDK requirement', () => {
     await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
     expect(prepare).toHaveBeenCalledWith(false);
     expect(session.getSnapshot()).toMatchObject({ phase: 'recording', audioSdkReady: true, vad: { enabled: false, mode: 'disabled' } });
-    const settingsCall = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/interpretation-settings'));
+    const settingsCall = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/settings'));
     expect(JSON.parse(String(settingsCall?.[1]?.body)).transcription.client_vad).toBe(false);
     await session.stop();
     expect(session.getSnapshot().audioSdkReady).toBe(false);
@@ -1216,7 +1418,7 @@ describe('disabled SDK configuration', () => {
   it('fails before preparing capture or creating a conversation', async () => {
     const microphone = new FakeMicrophone();
     const prepare = jest.spyOn(microphone, 'prepare');
-    const session = new RealtimeTranslationSession({ ...endpoints, audioSdkEnabled: false }, microphone, 'token');
+    const session = new RealtimeTranslationSession({ ...endpoints, audioSdkEnabled: false }, microphone);
     await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: true });
     await flush();
     expect(session.getSnapshot()).toMatchObject({ phase: 'error', audioSdkReady: false, error: 'Audio SDK is required. Enable audio-sdk before starting a session.' });

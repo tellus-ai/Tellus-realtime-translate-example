@@ -19,7 +19,9 @@ function readMessages(value: unknown): string[] {
   if (Array.isArray(value.message)) {
     return value.message.filter((item): item is string => typeof item === 'string');
   }
-  return typeof value.message === 'string' ? [value.message] : [];
+  if (typeof value.message === 'string') return [value.message];
+  // `POST /v1/access-tokens` reports an error as `{"detail": "<text>"}`.
+  return typeof value.detail === 'string' ? [value.detail] : [];
 }
 
 function unwrapEnvelope<T>(value: unknown): T {
@@ -27,6 +29,15 @@ function unwrapEnvelope<T>(value: unknown): T {
     return value.data as T;
   }
   return value as T;
+}
+
+/**
+ * True when nobody answered: the request failed or timed out here (`null`), or this example's
+ * server reports that Tellus could not be reached (`502`) or did not answer in time (`504`).
+ * Tellus may still have applied such a request.
+ */
+export function gotNoResponse(status: number | null): boolean {
+  return status === null || status === 502 || status === 504;
 }
 
 // REST error responses carry no Retry-After header, so temporary failures use fixed waits.
@@ -42,21 +53,21 @@ export interface RequestOptions {
 }
 
 /** Sends the request again after a 503, up to three more times. Other statuses are not retried. */
-export async function requestJson<T>(url: string, accessToken: string, init: RequestInit, { retryNetworkFailure = false }: RequestOptions = {}): Promise<T> {
+export async function requestJson<T>(url: string, init: RequestInit, { retryNetworkFailure = false }: RequestOptions = {}): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await requestOnce<T>(url, accessToken, init);
+      return await requestOnce<T>(url, init);
     } catch (error) {
       const status = error instanceof RealtimeApiError ? error.status : undefined;
       // No response includes a request that ran into REQUEST_TIMEOUT_MS.
-      const temporary = status === 503 || (status === null && retryNetworkFailure);
+      const temporary = status === 503 || (status !== undefined && gotNoResponse(status) && retryNetworkFailure);
       if (!temporary || attempt >= RETRY_DELAYS_MS.length) throw error;
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
     }
   }
 }
 
-async function requestOnce<T>(url: string, accessToken: string, init: RequestInit): Promise<T> {
+async function requestOnce<T>(url: string, init: RequestInit): Promise<T> {
   // React Native has no `AbortSignal.timeout`.
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -66,9 +77,11 @@ async function requestOnce<T>(url: string, accessToken: string, init: RequestIni
     response = await fetch(url, {
       ...init,
       signal: controller.signal,
+      // No credential: these calls go to this example's own server, which holds the API key
+      // (scripts/conversation-api-middleware.cjs). The header shows that this app sent them.
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken.trim()}`,
+        'X-Tellus-Example-Api': '1',
         ...init.headers,
       },
     });

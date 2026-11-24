@@ -47,8 +47,38 @@ describe('decideSocketClose', () => {
     });
   });
 
+  it('stops without ending the Conversation when another connection replaced Result', () => {
+    expect(decideSocketClose(close({ code: 1008, reason: 'results_connection_replaced' }))).toEqual({
+      action: 'fail',
+      reason: 'results_connection_replaced',
+      message: 'Another device or tab took over the results of this Conversation.',
+      endConversation: false,
+    });
+  });
+
+  it('does not take an inherited object key for a replaced-connection reason', () => {
+    expect(decideSocketClose(close({ code: 1008, reason: 'toString' }))).toMatchObject({
+      message: 'The server refused the connection. (toString)',
+      endConversation: true,
+    });
+  });
+
+  it.each(['API key expired', 'API key verification failed', ''])(
+    'stops after 4401 %s: reconnecting with the same key cannot succeed',
+    (reason) => {
+      expect(decideSocketClose(close({ code: 4401, reason, attempt: 2 }))).toEqual({
+        action: 'fail',
+        reason: reason || null,
+        message: `The server no longer accepts the API key. (${reason || 4401})`,
+        endConversation: true,
+      });
+    },
+  );
+
   it.each([
     ['origin_not_allowed', 'Permission denied.'],
+    ['auth_failed', 'Authentication failed.'],
+    ['v1_settings_required', 'Settings were saved through another route.'],
     ['interpretation_settings_changed', 'Interpretation worker revision conflict.'],
     ['interpretation_settings_not_found', 'Interpretation settings were not found.'],
     ['invalid_audio_status', 'Invalid audio status message.'],

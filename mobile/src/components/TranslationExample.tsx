@@ -32,7 +32,7 @@ export function TranslationExample() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const audioSdkEnabled = realtimeSpeechConfig.audioSdkEnabled !== false;
   const clientVad = vadSelected && !audioSdkEnabled;
-  const tokenConfigured = Boolean(realtimeSpeechConfig.accessToken);
+  const apiKeyConfigured = realtimeSpeechConfig.apiKeyConfigured;
   const active = ['creating', 'configuring', 'connecting', 'recording', 'paused', 'reconnecting', 'stopping'].includes(realtime.phase);
   const busy = ['creating', 'configuring', 'connecting', 'stopping'].includes(realtime.phase);
 
@@ -52,7 +52,7 @@ export function TranslationExample() {
         <Text style={styles.title}>Realtime Translation Example</Text>
         <Text style={styles.description}>Replace the components in this area to apply your own design.</Text>
 
-        {!tokenConfigured ? <Text style={styles.error}>Set API_KEY in mobile/.env.</Text> : null}
+        {!apiKeyConfigured ? <Text style={styles.error}>Set API_KEY in mobile/.env and restart the Expo development server.</Text> : null}
 
         <LanguageButtons label="Source Language" selected={sourceLanguage} disabled={active} onChange={setSourceLanguage} />
         <LanguageButtons label="Target Language" selected={targetLanguage} disabled={active} onChange={setTargetLanguage} />
@@ -62,7 +62,7 @@ export function TranslationExample() {
           onChange={(enabled) => void realtime.setDenoiseEnabled(enabled)} />
 
         <View style={styles.controls}>
-          <ActionButton label="Start" disabled={active || downloading || !tokenConfigured || realtime.denoise.updating} onPress={() => {
+          <ActionButton label="Start" disabled={active || downloading || !apiKeyConfigured || realtime.denoise.updating} onPress={() => {
             setDownloadMessage(null); setDownloadError(null);
             void realtime.start({ sourceLanguage, targetLanguage, clientVad });
           }} />

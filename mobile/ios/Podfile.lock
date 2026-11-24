@@ -128,7 +128,6 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - onnxruntime-c (1.24.3)
   - RCTDeprecation (0.83.9)
   - RCTRequired (0.83.9)
   - RCTSwiftUI (0.83.9)
@@ -2265,10 +2264,9 @@ PODS:
   - SDWebImageWebPCoder (0.14.6):
     - libwebp (~> 1.0)
     - SDWebImage/Core (~> 5.17)
-  - TellusAudioSdk (0.2.3):
+  - TellusAudioSdk (0.3.13):
     - hermes-engine
     - NitroModules
-    - onnxruntime-c (= 1.24.3)
     - RCTRequired
     - RCTTypeSafety
     - React-callinvoker
@@ -2396,7 +2394,6 @@ SPEC REPOS:
     - libavif
     - libdav1d
     - libwebp
-    - onnxruntime-c
     - SDWebImage
     - SDWebImageAVIFCoder
     - SDWebImageSVGCoder
@@ -2614,12 +2611,11 @@ SPEC CHECKSUMS:
   ExpoRouter: d606824355c288ac18492641c326b571a16762de
   ExpoSymbols: 896159288ad708e1a32dc12c92fe5f90bff01126
   FBLazyVector: dbf74de4626150660e7e6aa61bedca5bfe08ee97
-  hermes-engine: d9c4ffc40b69c7f372fa9aa7e44f4d68d5113bb8
+  hermes-engine: 44184111cb8aa952ddb09f20b3fe88155e7fd715
   libavif: 5f8e715bea24debec477006f21ef9e95432e254d
   libdav1d: 23581a4d8ec811ff171ed5e2e05cd27bad64c39f
   libwebp: 02b23773aedb6ff1fd38cec7a77b81414c6842a8
   NitroModules: f45159491c5a0e7161685a301b1c6c11440b3ab1
-  onnxruntime-c: 4a1a1a81da2087869dc9b6357f182952db2df29c
   RCTDeprecation: fd33ca1ccd370f92d656b2b2c42eb64920722170
   RCTRequired: e8df4eae11cd93c621094fd7ebc5519a52de1c6d
   RCTSwiftUI: cef2010e1e5e699600b2064d3aa702e53c35816c
@@ -2628,7 +2624,7 @@ SPEC CHECKSUMS:
   React: 6c36d83b2afecc1d45ec2a637158750edad20d87
   React-callinvoker: 89e3b00024ff7e18af33546d0501c780a1e6134a
   React-Core: fcb571da2212fb56f6aacff5a8ee039e7549e390
-  React-Core-prebuilt: ddd34d4ae250505d301442995d9096f93305d004
+  React-Core-prebuilt: 567d391dab6a84bdc8c4bebc81de1b74627899d6
   React-CoreModules: d0f70df16a6d565b9618a1592225da69bfd00921
   React-cxxreact: fc8e33bf2952abd14fbc5ac1e442cd7dd60c2956
   React-debug: 6a58e62cd3c4983ad330628023bfaf4fd0198f28
@@ -2691,7 +2687,7 @@ SPEC CHECKSUMS:
   ReactAppDependencyProvider: 87593e9dfdba8dac1d7b2af1af05f0eff2a05684
   ReactCodegen: b4aa50d6970a6ff1d8f36272a575b14ce5dea133
   ReactCommon: 2564a7f26237121a5d769b8b5b4d7d8af16ddad2
-  ReactNativeDependencies: 70f210d8dccc89991bf017f665b5d097a1b432dd
+  ReactNativeDependencies: 72252cb7fa02b9e5d0791392dc33f1902a99fcc8
   RNGestureHandler: 70c66b3f20c21877cd0cd3fa6272a0ec4db58af8
   RNReanimated: 2ac49f7d747eb2de512707b0f28e8190c1f61686
   RNScreens: 6dc191b37f954780463ebbf3303574e6b30386a4
@@ -2700,9 +2696,9 @@ SPEC CHECKSUMS:
   SDWebImageAVIFCoder: afe194a084e851f70228e4be35ef651df0fc5c57
   SDWebImageSVGCoder: 15a300a97ec1c8ac958f009c02220ac0402e936c
   SDWebImageWebPCoder: e38c0a70396191361d60c092933e22c20d5b1380
-  TellusAudioSdk: 18179bbe8263ce6b671c67a540d3f559040d3e4a
+  TellusAudioSdk: 23e43a152c843b79d8f3aa795eced7ca37576124
   Yoga: 7ca324e377340c274423a58a5494b08c2927f470
 
-PODFILE CHECKSUM: 6fef0c4c6b3284a039cacea8e5821fe783eafc63
+PODFILE CHECKSUM: 9db624459f046dd859580afbc6a4a8e464c92889
 
 COCOAPODS: 1.16.2

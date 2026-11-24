@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { resolveRealtimeSpeechConfig } from '../electron/config';
+import { resolveExampleApiUrl, resolveRealtimeSpeechConfig } from '../electron/config';
 import { resolveRendererFile } from '../electron/rendererProtocol';
 import { buildContentSecurityPolicy, isTrustedRendererUrl } from '../electron/security';
 
@@ -48,34 +48,52 @@ describe('buildContentSecurityPolicy', () => {
 
 describe('resolveRealtimeSpeechConfig', () => {
   it('uses the public speech server by default and trims values', () => {
-    expect(resolveRealtimeSpeechConfig({ API_KEY: ' token ' })).toEqual({
+    expect(resolveRealtimeSpeechConfig({})).toEqual({
       audioSdkEnabled: true,
-      accessToken: 'token',
-      httpBaseUrl: 'https://public.speech.tellus.ai.kr',
       websocketBaseUrl: 'wss://public.speech.tellus.ai.kr',
+      exampleApiUrl: null,
     });
     expect(resolveRealtimeSpeechConfig({
-      REALTIME_SPEECH_HTTP_URL: 'https://rts.example.test/',
       REALTIME_SPEECH_WS_URL: 'wss://rts.example.test//',
+      TELLUS_EXAMPLE_API_URL: ' https://backend.example.test/__tellus/api/ ',
     })).toMatchObject({
-      httpBaseUrl: 'https://rts.example.test',
       websocketBaseUrl: 'wss://rts.example.test',
+      exampleApiUrl: 'https://backend.example.test/__tellus/api',
     });
+  });
+
+  it('never reads the API key: the main process does not hold it', () => {
+    const config = resolveRealtimeSpeechConfig({ API_KEY: 'tl_test_secret-key', REALTIME_SPEECH_HTTP_URL: 'https://x.test' });
+    expect(JSON.stringify(config)).not.toContain('secret');
+    expect(Object.keys(config).sort()).toEqual(['audioSdkEnabled', 'exampleApiUrl', 'websocketBaseUrl']);
   });
 
   it('allows plain-text transport only for localhost', () => {
     expect(resolveRealtimeSpeechConfig({
-      REALTIME_SPEECH_HTTP_URL: 'http://localhost:8000',
       REALTIME_SPEECH_WS_URL: 'ws://127.0.0.1:8000',
-    })).toMatchObject({ httpBaseUrl: 'http://localhost:8000', websocketBaseUrl: 'ws://127.0.0.1:8000' });
-    expect(() => resolveRealtimeSpeechConfig({ REALTIME_SPEECH_HTTP_URL: 'http://rts.example.test' }))
-      .toThrow('REALTIME_SPEECH_HTTP_URL must use https:');
+      TELLUS_EXAMPLE_API_URL: 'http://localhost:8787/__tellus/api',
+    })).toMatchObject({ websocketBaseUrl: 'ws://127.0.0.1:8000', exampleApiUrl: 'http://localhost:8787/__tellus/api' });
+    expect(() => resolveRealtimeSpeechConfig({ TELLUS_EXAMPLE_API_URL: 'http://backend.example.test' }))
+      .toThrow('TELLUS_EXAMPLE_API_URL must use https:');
     expect(() => resolveRealtimeSpeechConfig({ REALTIME_SPEECH_WS_URL: 'https://rts.example.test' }))
       .toThrow('REALTIME_SPEECH_WS_URL must use wss:');
+    expect(() => resolveRealtimeSpeechConfig({ TELLUS_EXAMPLE_API_URL: 'https://user:pass@backend.example.test' }))
+      .toThrow('TELLUS_EXAMPLE_API_URL must not contain credentials, a query, or a hash.');
   });
 
   it('disables SDK mode only when explicitly configured off', () => {
     expect(resolveRealtimeSpeechConfig({ TELLUS_AUDIO_SDK_ENABLED: ' false ' }).audioSdkEnabled).toBe(false);
     expect(resolveRealtimeSpeechConfig({ TELLUS_AUDIO_SDK_ENABLED: 'true' }).audioSdkEnabled).toBe(true);
+  });
+});
+
+describe('resolveExampleApiUrl', () => {
+  it('prefers TELLUS_EXAMPLE_API_URL, then the routes of the npm run dev server', () => {
+    expect(resolveExampleApiUrl('https://backend.example.test/api', 'http://127.0.0.1:5173/')).toBe('https://backend.example.test/api');
+    expect(resolveExampleApiUrl(null, 'http://127.0.0.1:5173/')).toBe('http://127.0.0.1:5173/__tellus/api');
+  });
+
+  it('is null without either, as in a packaged app without TELLUS_EXAMPLE_API_URL', () => {
+    expect(resolveExampleApiUrl(null, null)).toBeNull();
   });
 });

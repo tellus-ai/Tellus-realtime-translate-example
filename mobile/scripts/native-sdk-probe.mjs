@@ -55,7 +55,8 @@ function runtimeProbe(url, shortWav, longWav) {
     }
   }
   function authorize() {
-    state.socket = new WebSocket(url.replace('http:', 'ws:') + '/audio?conversation_id=conversation-1');
+    // 테스트 서버(web/scripts/test-engine-server.mjs)는 /v1/audio와 테스트 입장권만 받는다.
+    state.socket = new WebSocket(url.replace('http:', 'ws:') + '/v1/audio?conversation_id=conversation-1&audio_format=opus&token=test-access-token');
     state.controller = attach(state.socket, state.capture, { conversationId: 'conversation-1', getAccessToken: function () { return 'test-access-token'; },
       requestTimeoutMs: 30000, onError: function (error) { state.errors.push(error.message); } });
     return state.controller.ready;

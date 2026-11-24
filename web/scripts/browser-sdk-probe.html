@@ -3,7 +3,8 @@
 import { AudioEngine } from '/tellus-audio/platforms/web/index.js';
 import { attachEngineAuthorization } from '/tellus-audio/bindings/typescript/authorization/realtime.js';
 const sampleRate = Number(new URLSearchParams(location.search).get('sampleRate') ?? 16000);
-const modelFamily = sampleRate === 48000 ? 'fe-s48' : 'fe-s16';
+// 엔진은 처리 sampleRate와 관계없이 DFN3를 48 kHz로 돌린다.
+const denoiseModel = 'dfn3-48';
 const frameSamples = sampleRate / 50;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 window.probe = { state: 'idle', chunks: [], errors: [], checks: {} };
@@ -18,18 +19,18 @@ document.querySelector('#run').onclick = async () => {
       engineModuleUrl: new URL('tellus-audio-engine.mjs', base).href,
       wasmUrl: new URL('tellus-audio-engine.wasm', base).href,
       ortWasmBaseUrl: new URL('ort/', base).href,
-      encryptedModels: [modelFamily, 'silero-vad'].map((id) => new URL(`models/${id}.temc`, base).href),
+      encryptedModels: ['denoise', 'vad'].map((role) => new URL(`models/${role}.temc`, base).href),
     });
     const capture = engine.createCapture();
     let refused = false;
     try { await capture.start(() => {}); } catch (error) { refused = error.message === 'engine_authorization_required'; }
     check('start_requires_native_permit', refused);
     check('no_microphone_before_permit', window.micRequests.length === 0);
-    socket = new WebSocket(location.origin.replace('http:', 'ws:') + '/audio?conversation_id=conversation-1&audio_format=opus');
+    socket = new WebSocket(location.origin.replace('http:', 'ws:') + '/v1/audio?conversation_id=conversation-1&audio_format=opus&token=test-access-token');
     authorization = attachEngineAuthorization(socket, capture, { conversationId: 'conversation-1', getAccessToken: () => 'test-access-token', onError: (error) => probe.errors.push(error.message) });
     await authorization.ready;
     const loaded = await capture.getStatus();
-    check('encrypted_models_loaded', loaded.modelsLoaded.includes(modelFamily) && loaded.modelsLoaded.includes('silero-vad'));
+    check('encrypted_models_loaded', loaded.modelsLoaded.includes(denoiseModel) && loaded.modelsLoaded.includes('silero-vad'));
     await capture.start((error, chunk) => {
       if (error) { probe.errors.push(error.message); return; }
       if (chunk) probe.chunks.push({ codec: chunk.codec, sampleRate: chunk.sampleRate, sample: chunk.sample, count: chunk.sampleCount, valid: chunk.validSampleCount, bytes: chunk.data.microphone.length, rms: chunk.rms, gate: chunk.gateEvent, gap: chunk.discontinuity?.reason, lag: Date.now() - chunk.timestamp });

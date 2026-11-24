@@ -10,6 +10,7 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
   if (process.env.TELLUS_ENGINE_TEST_LICENSE !== '1') throw new Error('Set TELLUS_ENGINE_TEST_LICENSE=1 for test-only engine artifacts');
   const require = createRequire(import.meta.url);
   const { signTestPermit } = require(resolve(engineRoot, 'scripts/ci/engine-authorization-fixture.js'));
+  const { createConversationApiMiddleware } = require('./conversation-api-middleware.cjs');
   const contentKey = Buffer.from(readFileSync(keyFile, 'utf8').trim(), 'hex');
   if (contentKey.length !== 32) throw new Error('Expected a 32-byte test content key');
   const registry = JSON.parse(readFileSync(resolve(modelDir, 'manifest.json'), 'utf8')).models;
@@ -18,12 +19,18 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
   const results = new Set();
   let denyRenewal = false;
   const mime = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm' };
+  // 브라우저 번들에는 API 키가 없다. 실제 미들웨어가 키를 붙여 아래 /v1 경로로 넘기는지 함께 검증한다.
+  let conversationApi = null;
   const server = createServer((request, response) => {
+    if (request.url.startsWith('/__tellus/api')) return conversationApi(request, response, () => { response.writeHead(404); response.end(); });
     const url = new URL(request.url, 'http://127.0.0.1');
     const reply = (value) => { response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); };
     if (request.method === 'POST') {
-      if (url.pathname === '/conversations') return reply({ conversation_id: 'conversation-1' });
-      if (url.pathname.endsWith('/interpretation-settings')) return reply({});
+      // REST는 미들웨어가 붙인 API 키로, WebSocket은 /v1/access-tokens가 발급한 입장권으로만 연다.
+      if (request.headers.authorization !== 'Bearer test-api-key') stats.errors.push(`Missing API key on ${url.pathname}`);
+      if (url.pathname === '/v1/conversations') return reply({ conversation_id: 'conversation-1' });
+      if (url.pathname === '/v1/access-tokens') return reply({ access_token: 'test-access-token', expires_at_ms: Date.now() + 900000 });
+      if (url.pathname.endsWith('/settings')) return reply({});
       if (url.pathname.endsWith('/end')) {
         stats.endings++;
         for (const socket of results) socket.send(JSON.stringify({ type: 'conversation.ended', data: {} }));
@@ -38,11 +45,15 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
   });
   const websocket = new WebSocketServer({ noServer: true, maxPayload: 65536 });
   server.on('upgrade', (request, socket, head) => websocket.handleUpgrade(request, socket, head, (peer) => {
-    const isAudio = request.url.startsWith('/audio?');
+    const isAudio = request.url.startsWith('/v1/audio?');
+    if (new URL(request.url, 'http://127.0.0.1').searchParams.get('token') !== 'test-access-token') {
+      stats.errors.push(`Missing access token on ${request.url.split('?')[0]}`);
+      peer.close(1008, 'auth_failed');
+      return;
+    }
     const group = isAudio ? audio : results;
     group.add(peer);
     peer.on('close', () => group.delete(peer));
-    if (!isAudio) peer.send(JSON.stringify({ type: 'participants.snapshot', data: {} }));
     let authorized = false;
     let wasAuthorized = false;
     let transcribed = false;
@@ -59,7 +70,9 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
           if (!transcribed) {
             transcribed = true;
             for (const result of results) result.send(JSON.stringify({
-              type: 'result', data: { conversation_id: 'conversation-1', event_type: 'transcript.final', order_seq: 1, text: '실제 엔진 통합 테스트', source_language: 'ko-KR', target_language: null },
+              type: 'transcript.final', data: { conversation_id: 'conversation-1', utterances: [
+                { order_seq: 1, transcript: '실제 엔진 통합 테스트', source_language: 'ko-KR', speaker_id: '1', start_ms: 0, end_ms: 1000 },
+              ] },
             }));
           }
           return;
@@ -75,7 +88,8 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
           return;
         }
         const keys = (message.model_keys ?? []).map((key) => {
-          if (!registry.some((model) => model.id === key.model_id && model.keyId === key.key_id)) throw new Error('Unknown fixture model');
+          // manifest의 id는 역할(denoise, vad)이고 키 요청의 model_id는 모델 이름(dfn3-48, silero-vad)이라 keyId로만 맞춘다.
+          if (!registry.some((model) => model.keyId === key.key_id)) throw new Error('Unknown fixture model');
           stats.keyRequests++;
           return { model_id: key.model_id, key_id: key.key_id, wrapped_key: wrapContentKey({
             recipientPublicKey: Buffer.from(key.public_key, 'hex'), contentKey,
@@ -91,6 +105,7 @@ export async function startEngineTestServer({ engineRoot, keyFile, modelDir, sta
   }));
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   const port = server.address().port;
+  conversationApi = createConversationApiMiddleware({ apiKey: 'test-api-key', httpBaseUrl: `http://127.0.0.1:${port}` });
   return {
     url: `http://127.0.0.1:${port}`, stats,
     disconnectAudio: () => { for (const socket of audio) socket.terminate(); },

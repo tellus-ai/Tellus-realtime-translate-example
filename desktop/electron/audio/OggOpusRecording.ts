@@ -1,7 +1,7 @@
 export interface RecordingChunk {
   data: { microphone?: Uint8Array };
   sampleCount: number;
-  validSampleCount?: number;
+  validSampleCount?: number | null;
   sampleRate?: number;
   sample?: number;
   sequence?: number;

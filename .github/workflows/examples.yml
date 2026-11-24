@@ -1,0 +1,104 @@
+name: Example checks
+
+# Runs on every pull request and needs no secrets: the pinned public SDK, the unit tests, the type
+# checks, the builds, and the guarantee that the API key stays out of what each app ships. The native
+# engine is not installed here (that needs an installation token); check it locally with the
+# commands in each example's README.
+on:
+  pull_request:
+  push:
+    branches: [main, v2]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: example-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  setup-tests:
+    name: Standalone SDK setup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test standalone installation with local SDK fixtures
+        run: node --test tests/setup-sdk.test.mjs mobile/scripts/setup.test.mjs
+
+  app:
+    name: ${{ matrix.app }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [web, mobile, desktop]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    env:
+      # Not a key. The last step of each app fails if this value reaches what the app ships.
+      MARKER_API_KEY: tl_test_ci-marker-not-a-real-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - name: Prepare the pinned public SDK
+        run: node ../.github/scripts/prepare-example-sdk.mjs .
+      - name: Install dependencies
+        run: npm ci --ignore-scripts ${{ matrix.app == 'mobile' && '--legacy-peer-deps' || '' }}
+
+      - name: Type checks and tests
+        if: matrix.app == 'web'
+        run: |
+          npm run typecheck
+          npm test
+          npm run test:download-server
+          npm run test:api-server
+      - name: Type checks and tests
+        if: matrix.app == 'mobile'
+        run: npm run verify:pre-commit
+      - name: Type checks, tests and build
+        if: matrix.app == 'desktop'
+        run: |
+          npm run typecheck
+          npm test
+          npm run test:api-server
+          npm run build
+
+      # The development server holds the API key; the app only gets access tokens.
+      - name: The API key stays out of the browser bundle
+        if: matrix.app == 'web'
+        run: |
+          # `npm run build` also copies the engine assets, which need an installation token.
+          API_KEY="$MARKER_API_KEY" npx vite build --outDir "$RUNNER_TEMP/web-dist"
+          if grep -rqF "$MARKER_API_KEY" "$RUNNER_TEMP/web-dist"; then
+            echo "::error::API_KEY was built into the browser bundle."
+            exit 1
+          fi
+      - name: The API key stays out of the app config
+        if: matrix.app == 'mobile'
+        run: |
+          API_KEY="$MARKER_API_KEY" npx expo config --type public --json > "$RUNNER_TEMP/expo-config.json"
+          if grep -qF "$MARKER_API_KEY" "$RUNNER_TEMP/expo-config.json"; then
+            echo "::error::API_KEY reached the Expo config that ships in the app."
+            exit 1
+          fi
+          grep -qF '"apiKeyConfigured":true' "$RUNNER_TEMP/expo-config.json"
+      - name: The API key stays out of the packaged app
+        if: matrix.app == 'desktop'
+        run: |
+          printf 'API_KEY=%s\n' "$MARKER_API_KEY" > .env
+          npm run build
+          if grep -rqF "$MARKER_API_KEY" dist; then
+            echo "::error::API_KEY reached dist/, which electron-builder packages."
+            exit 1
+          fi

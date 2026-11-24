@@ -1,12 +1,26 @@
-import type { AudioCapture, AudioChunk } from '@tellus-ai/audio-sdk-mobile';
+import type { AudioCapture, AudioCaptureConfig, AudioChunk } from '@tellus-ai/audio-sdk-mobile';
 import { attachEngineAuthorization, type EngineAuthorizationController } from '@tellus-ai/audio-sdk-mobile/authorization';
+
+// Denoise starts off. When it is turned on, it runs in close_talk mode: a near-speech gate turns sound
+// that is not close to the microphone into silence (about 330 ms more delay, attenuation capped).
+// The values are the engine defaults (SDK 0.3.13 / engine 0.4.13), written out so they can be tuned.
+export const DENOISE_SETTINGS = {
+  denoiseMode: 'close_talk',
+  closeTalkThresholdDb: 30,
+  denoiseAttenuationLimitDb: 12,
+  closeTalkHoldMs: 250,
+  closeTalkKeepGapDb: 4,
+  closeTalkLevelMarginDb: 2,
+  closeTalkLevelMinDbfs: -20,
+} as const satisfies AudioCaptureConfig;
 
 export interface MicrophoneRecorder {
   readonly audioSdkReady: boolean;
   readonly denoiseEnabled: boolean;
   setDenoiseEnabled(enabled: boolean): Promise<boolean>;
   prepare(clientVad: boolean): Promise<void>;
-  authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void>;
+  /** `getAccessToken` is called for the first approval and again for every renewal. */
+  authorize(socket: WebSocket, conversationId: string, getAccessToken: () => Promise<string>, onError: (error: Error) => void): Promise<void>;
   releaseAuthorization(): void;
   start(onFrame: (frame: AudioChunk) => void, onError: (error: Error) => void): Promise<void>;
   pause(): Promise<void>;
@@ -20,7 +34,8 @@ export class NativeMicrophone implements MicrophoneRecorder {
   private authorization?: EngineAuthorizationController;
   private callback?: Parameters<AudioCapture['start']>[0];
   private generation = 0;
-  private denoise = process.env.EXPO_PUBLIC_TELLUS_DENOISE !== 'false';
+  // Off unless EXPO_PUBLIC_TELLUS_DENOISE=true. The switch on the screen changes it at any time.
+  private denoise = process.env.EXPO_PUBLIC_TELLUS_DENOISE === 'true';
 
   get audioSdkReady(): boolean { return Boolean(this.capture); }
   get denoiseEnabled(): boolean { return this.denoise; }
@@ -46,7 +61,7 @@ export class NativeMicrophone implements MicrophoneRecorder {
       const engine = await AudioEngine.init({
         micEnabled: true, processing: { sampleRate: 16000, chunkDurationMs: 20 },
         transport: { codec: 'opus', bitrateBps: 64000 },
-        denoiseEnabled: this.denoise, vadEnabled: false,
+        denoiseEnabled: this.denoise, vadEnabled: false, ...DENOISE_SETTINGS,
         echoCancellationEnabled: true, micAgc2Enabled: false,
       });
       if (generation !== this.generation) return;
@@ -59,11 +74,11 @@ export class NativeMicrophone implements MicrophoneRecorder {
     }
   }
 
-  async authorize(socket: WebSocket, conversationId: string, accessToken: string, onError: (error: Error) => void): Promise<void> {
+  async authorize(socket: WebSocket, conversationId: string, getAccessToken: () => Promise<string>, onError: (error: Error) => void): Promise<void> {
     if (!this.capture) throw new Error('Audio capture is unavailable.');
     this.releaseAuthorization();
     this.authorization = attachEngineAuthorization(socket, this.capture, {
-      conversationId, getAccessToken: () => accessToken, onError,
+      conversationId, getAccessToken, onError,
     });
     await this.authorization.ready;
   }

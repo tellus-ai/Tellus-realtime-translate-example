@@ -12,7 +12,8 @@
     "type-check": "tsc --noEmit",
     "test:setup": "node --test scripts/setup.test.mjs",
     "test:download-server": "node --test scripts/recording-download-middleware.check.cjs",
-    "verify:pre-commit": "npm run type-check && npm test && npm run test:setup && npm run test:download-server"
+    "test:api-server": "node --test scripts/conversation-api-middleware.check.cjs",
+    "verify:pre-commit": "npm run type-check && npm test && npm run test:setup && npm run test:download-server && npm run test:api-server"
   },
   "dependencies": {
     "@expo/env": "2.4.3",

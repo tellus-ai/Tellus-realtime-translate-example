@@ -19,7 +19,11 @@ export type DesktopConfigArgumentPrefix = '--tellus-desktop-config=';
 
 export interface DesktopConfig {
   audioSdkEnabled: boolean;
-  accessTokenConfigured: boolean;
+  /**
+   * Whether the app knows an example API server: the `npm run dev` server or
+   * `TELLUS_EXAMPLE_API_URL`. That server holds the API key; the app never does.
+   */
+  apiServerConfigured: boolean;
 }
 
 export interface StartConversationInput {
