@@ -5,6 +5,8 @@
 // This is the part to replace with your own backend. It does not know who the caller is; a real
 // backend decides that first, for example from its own login session.
 
+const { isIP } = require('node:net');
+
 const PREFIX = '/__tellus/api';
 // A Conversation ID is a UUID. The narrow pattern also keeps `.` and `..` segments, which would
 // make the forwarded URL point at another route, out of the path.
@@ -29,6 +31,21 @@ function normalizeAddress(address) {
 }
 function isLoopback(address) {
   return address === '::1' || /^127\./.test(address);
+}
+
+/**
+ * Whether `origin` is this server's own page. Its name must be an IP address or `localhost`: a page
+ * on another domain can point its name at this computer (DNS rebinding), and its Origin then
+ * matches Host. Browsers send Origin with every POST, so such a page cannot leave it out.
+ */
+function isOwnPage(origin, host) {
+  try {
+    const url = new URL(origin);
+    const name = url.hostname.replace(/^\[|\]$/g, '');
+    return url.host === host && (isIP(name) !== 0 || name === 'localhost' || name.endsWith('.localhost'));
+  } catch {
+    return false;
+  }
 }
 
 function warnRefusedClient(address) {
@@ -74,8 +91,7 @@ function createConversationApiMiddleware({
     if (request.method !== 'POST') return reply(405, 'POST is required.');
     // The custom header and same-origin check keep other web pages from using this server's key.
     const origin = request.headers.origin;
-    let sameOrigin = !origin;
-    try { if (origin) sameOrigin = new URL(origin).host === request.headers.host; } catch {}
+    const sameOrigin = !origin || isOwnPage(origin, request.headers.host);
     if (!sameOrigin || request.headers['x-tellus-example-api'] !== '1') {
       return reply(403, 'This request is not allowed.');
     }
@@ -100,6 +116,8 @@ function createConversationApiMiddleware({
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
           body: size > 0 ? Buffer.concat(chunks) : undefined,
           signal: AbortSignal.timeout(timeoutMs),
+          // A redirect would send the key to a route outside ROUTES. It counts as no answer.
+          redirect: 'error',
         });
         status = answer.status;
         contentType = answer.headers.get('content-type') || 'application/json';

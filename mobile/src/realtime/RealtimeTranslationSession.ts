@@ -527,7 +527,7 @@ export class RealtimeTranslationSession {
     this.closeSocket('audio');
     if (!keepResultSocket) this.closeSocket('result');
     await this.microphone.stop().catch(() => {});
-    this.update({ audioSdkReady: false, recordingAvailable: this.recording.hasAudio });
+    this.update({ audioSdkReady: false, recordingAvailable: this.recording.hasAudio, denoise: { ...this.snapshot.denoise, applied: null, updating: false } });
   }
   private enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
     const result = this.lifecycleQueue.then(operation);

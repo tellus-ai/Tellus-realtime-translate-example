@@ -1,0 +1,6 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
+#include "Generated.xcconfig"
+
+// The Tellus engine has no x86_64 simulator slice. Its podspec excludes x86_64 for the app too, but
+// Generated.xcconfig sets this value again, so the exclusion is repeated here.
+EXCLUDED_ARCHS[sdk=iphonesimulator*] = $(inherited) x86_64

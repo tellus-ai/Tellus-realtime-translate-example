@@ -1,6 +1,6 @@
 # Web Realtime Translation Example
 
-Vite/React 예제입니다. `@tellus-ai/audio-sdk-web` 0.3.13의 Rust WASM 엔진으로 마이크 오디오를 처리하고 Tellus Realtime Speech 서버로 전송합니다.
+Vite/React 예제입니다. `@tellus-ai/audio-sdk-web` 0.3.15의 Rust WASM 엔진으로 마이크 오디오를 처리하고 Tellus Realtime Speech 서버로 전송합니다.
 
 See the root [`README.md`](../README.md#api-contract) for the `/v1` REST and WebSocket contracts used by
 this example.
@@ -19,11 +19,11 @@ You can also use the development script.
 ./dev.sh
 ```
 
-`npm run setup` 전에 `.env`의 `TELLUS_AUDIO_ENGINE_TOKEN`에 Tellus에서 발급한 설치 토큰을 설정합니다. 설치 토큰은 실행 시 사용하는 `API_KEY`(Tellus API 콘솔에서 발급한 API 키)와 별개입니다. setup은 토큰을 먼저 검사하고 공개 SDK 0.3.13의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `npm ci`, SDK 설치기, `prepare:engine`을 순서대로 실행합니다. Node.js 24와 Git이 필요하며 별도 SDK 폴더를 준비할 필요가 없습니다. npm lifecycle 스크립트를 비활성화한 경우에도 SDK 설치기를 직접 실행하여 엔진과 모델 설치를 확인합니다. 다운로드 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정합니다. 설치 토큰에 `VITE_` 접두사를 붙이지 않습니다.
+`npm run setup` 전에 `.env`의 `TELLUS_AUDIO_ENGINE_TOKEN`에 Tellus에서 발급한 설치 토큰을 설정합니다. 설치 토큰은 실행 시 사용하는 `API_KEY`(Tellus API 콘솔에서 발급한 API 키)와 별개입니다. setup은 토큰을 먼저 검사하고 공개 SDK 0.3.15의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `npm ci`, SDK 설치기, `prepare:engine`을 순서대로 실행합니다. Node.js 24와 Git이 필요하며 별도 SDK 폴더를 준비할 필요가 없습니다. npm lifecycle 스크립트를 비활성화한 경우에도 SDK 설치기를 직접 실행하여 엔진과 모델 설치를 확인합니다. 다운로드 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정합니다. 설치 토큰에 `VITE_` 접두사를 붙이지 않습니다.
 
 SDK의 `vendor/web`에 엔진 `.mjs`·`.wasm`과 암호화 모델이 준비되어 있어야 합니다. `prepare:engine`은 SDK의 자산 복사 도구로 `public/tellus-audio/`를 생성하며 `dev`와 `build` 전에 자동 실행됩니다. 엔진 또는 SDK를 변경했으면 먼저 SDK를 다시 빌드합니다. 배포 서버의 모델 키 등록은 복사한 모델 manifest의 `keyId`와 일치해야 합니다.
 
-`.npmrc`의 `install-links=true`로 `.sdk/platforms/web` 패키지를 앱의 `node_modules`에 복사 설치합니다. SDK가 사용하는 엔진은 **0.4.13**입니다. 다운로드 서버는 `wasm32-emscripten` archive와 `.sha256` 파일을 모두 허용하고 게시해야 합니다. `.sdk/`는 setup이 관리하는 로컬 빌드 캐시이며 다른 SDK 버전이 들어 있으면 삭제 후 `npm run setup`을 다시 실행합니다.
+`.npmrc`의 `install-links=true`로 `.sdk/platforms/web` 패키지를 앱의 `node_modules`에 복사 설치합니다. SDK가 사용하는 엔진은 **0.4.15**입니다. 다운로드 서버는 `wasm32-emscripten` archive와 `.sha256` 파일을 모두 허용하고 게시해야 합니다. `.sdk/`는 setup이 관리하는 로컬 빌드 캐시이며 다른 SDK 버전이 들어 있으면 삭제 후 `npm run setup`을 다시 실행합니다.
 
 Set the API key issued in the Tellus API Console in `API_KEY` in `.env`, select two different languages, and start the session.
 The development server reads the key and keeps it; the key is not sent to the browser and cannot be entered or
@@ -78,7 +78,9 @@ POST /__tellus/api/v1/conversations/{id}/end -----------------------------------
   returns the status and the body of Tellus unchanged, and answers `502` when Tellus could not be reached and
   `504` when it did not answer within 15 seconds.
 - The browser sends no credential on these calls. The middleware accepts them only from this page: the
-  `Origin` has to be its own, and the request has to carry the `X-Tellus-Example-Api: 1` header.
+  `Origin` has to be its own, and the request has to carry the `X-Tellus-Example-Api: 1` header. The page must be
+  opened by `localhost` or an IP address: an Origin with another name is refused, so that a site cannot point its
+  name at this computer (DNS rebinding). The recording download route applies the same rule.
 - The WebSockets go from the browser straight to Tellus. A browser cannot set headers on a WebSocket, and the
   server refuses an API key in a URL, so both open with the access token in `token=`.
 - A token opens only this Conversation. `src/api/accessTokens.ts` keeps the current one and asks for the next
@@ -199,7 +201,7 @@ npm run test:live
 
 ## 로컬 캡처 음성 다운로드
 
-**Start → Stop → Download Audio** 순서로 SDK가 캡처한 음성을 `tellus-recording-<timestamp>.ogg` 파일로 저장합니다. SDK의 기존 Opus 전송 프레임을 Ogg 컨테이너에 저장하므로 번역용 오디오 전송 설정은 그대로 유지합니다. 저장 위치는 **Vite 개발·preview 서버를 실행하는 Mac의 `~/download`**이며, 현재 Mac에서는 `/Users/lucas/download`입니다. 서버가 소문자 `download` 폴더를 생성해 저장하고 완료 후 실제 경로를 표시합니다. 기존 파일을 덮어쓰지 않습니다.
+**Start → Stop → Download Audio** 순서로 SDK가 캡처한 음성을 `tellus-recording-<timestamp>.ogg` 파일로 저장합니다. SDK의 기존 Opus 전송 프레임을 Ogg 컨테이너에 저장하므로 번역용 오디오 전송 설정은 그대로 유지합니다. 저장 위치는 **Vite 개발·preview 서버를 실행하는 Mac의 `~/download`**이며, 현재 Mac에서는 `/Users/lucas/download`입니다. 서버가 소문자 `download` 폴더를 생성해 저장하고 완료 후 실제 경로를 표시합니다. 기존 파일을 덮어쓰지 않습니다. 저장도 API 호출처럼 이 Mac(loopback)과 `TELLUS_EXAMPLE_API_CLIENTS`의 주소에서만 받습니다.
 
 파일 저장은 로컬 Vite 서버의 `/__tellus/recordings/` middleware가 처리합니다. `npm run dev` 또는 `npm run preview`로 로컬 서버를 실행해야 하며, 정적 웹 호스팅만으로는 Mac에 파일을 저장할 수 없습니다. 서버 연결 또는 저장에 실패하면 오류를 표시하며 브라우저의 기본 다운로드 폴더로 우회하지 않습니다.
 

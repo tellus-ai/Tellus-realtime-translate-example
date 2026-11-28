@@ -1,6 +1,7 @@
 // Prepares the pinned public SDK source of one example in <app>/.sdk, the way `npm run setup` does,
 // without the engine download that needs an installation token. Type checks, unit tests and builds
-// need only the SDK's JavaScript packages.
+// need only the SDK's JavaScript packages; the Flutter example's analysis and tests need only the
+// Dart package of its plugin (.sdk/platforms/flutter).
 //
 //   node .github/scripts/prepare-example-sdk.mjs web
 import { execFileSync } from 'node:child_process';
