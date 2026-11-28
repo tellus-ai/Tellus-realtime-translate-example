@@ -4,6 +4,7 @@ Standalone realtime translation examples that can be copied and used independent
 
 - [`web/`](./web/README.md): Vite + React web example
 - [`mobile/`](./mobile/README.md): Expo + React Native mobile example
+- [`flutter/`](./flutter/README.md): Flutter mobile example (iOS and Android)
 - [`desktop/`](./desktop/README.md): Electron desktop example using the Tellus native audio engine
 
 None of the apps depend on local Realtime Speech server code. All of them connect directly to the Tellus public speech server below. Issue `API_KEY` and `TELLUS_AUDIO_ENGINE_TOKEN` in the Tellus API Console (https://public.api.tellus.ai.kr/console).
@@ -13,19 +14,21 @@ None of the apps depend on local Realtime Speech server code. All of them connec
 
 Each app has its own packages and realtime communication implementation, with no imports between them.
 `API_KEY` in each app's `.env` file is read by that app's development server, not by the app:
-the Vite server for web and desktop, and the Expo (Metro) server for mobile. The app calls its
-development server, which adds `Authorization: Bearer <API key>` and forwards the call to Tellus,
-and opens the WebSockets with an access token that the server gets for it; see
+the Vite server for web and desktop, the Expo (Metro) server for mobile, and a small Node server
+(`scripts/dev-server.mjs`) for Flutter. The app calls its development server, which adds
+`Authorization: Bearer <API key>` and forwards the call to Tellus, and opens the WebSockets with an
+access token that the server gets for it; see
 [Base URLs and authentication](#base-urls-and-authentication).
 
 ## 플랫폼별 SDK 설치
 
-각 예제는 `npm run setup`으로 필요한 플랫폼 SDK **0.3.13**과 엔진 **0.4.13**을 설치합니다. Node.js 24와 Git이 필요합니다. 별도 SDK 저장소나 엔진 소스를 직접 준비할 필요가 없습니다.
+각 예제는 `npm run setup`으로 필요한 플랫폼 SDK와 엔진을 설치합니다. 모든 예제가 SDK **0.3.15**와 엔진 **0.4.15**를 사용합니다. Node.js 24와 Git이 필요하고, Flutter 예제에는 Flutter도 필요합니다. 별도 SDK 저장소나 엔진 소스를 직접 준비할 필요가 없습니다.
 
 | 예제 | 설치 패키지 |
 | --- | --- |
 | 웹 | `@tellus-ai/audio-sdk-web` |
 | 모바일 | `@tellus-ai/audio-sdk-mobile` |
+| Flutter | Flutter plugin `tellus_audio_sdk` (SDK 저장소의 `platforms/flutter`) |
 | 데스크톱 | `@tellus-ai/audio-sdk-desktop` |
 
 각 예제 폴더에서 실행합니다.
@@ -36,13 +39,13 @@ cp .env.example .env
 npm run setup
 ```
 
-setup은 공개 SDK 저장소의 `v0.3.13`을 각 예제 내부의 `.sdk/`에 내려받고 `scripts/audio-sdk-release.json`의 고정 커밋을 검증한 뒤 JavaScript 패키지를 빌드합니다. `.npmrc`의 `install-links=true`로 해당 플랫폼 패키지를 `node_modules`에 복사하고, 설치 토큰과 같은 환경의 다운로드 서버에서 엔진·checksum·암호화 모델을 준비합니다. Web은 브라우저 자산도 복사합니다. Rust 빌드나 GitHub 인증은 필요하지 않습니다.
+setup은 공개 SDK 저장소의 `v0.3.15`를 각 예제 내부의 `.sdk/`에 내려받고 `scripts/audio-sdk-release.json`의 고정 커밋을 검증한 뒤 JavaScript 패키지를 빌드합니다. `.npmrc`의 `install-links=true`로 해당 플랫폼 패키지를 `node_modules`에 복사하고, 설치 토큰과 같은 환경의 다운로드 서버에서 엔진·checksum·암호화 모델을 준비합니다. Web은 브라우저 자산도 복사합니다. Flutter는 `node_modules`에 복사하지 않고 `.sdk/platforms/flutter`를 `pubspec.yaml`의 path 의존성으로 사용하며, 그 폴더에 엔진을 설치한 뒤 `flutter pub get`을 실행합니다. Rust 빌드나 GitHub 인증은 필요하지 않습니다.
 
-`TELLUS_AUDIO_DOWNLOAD_BASE_URL`은 설치 토큰의 환경과 같아야 합니다. 다운로드 서버에 대상 엔진과 checksum이 게시되고 해당 플랫폼이 허용되어 있어야 setup이 완료됩니다. Web은 `wasm32-emscripten` archive와 checksum을 사용합니다. `.sdk/`는 Git에서 제외하며, 버전을 변경할 때는 세 예제의 SDK 고정 커밋과 lockfile을 함께 갱신합니다.
+`TELLUS_AUDIO_DOWNLOAD_BASE_URL`은 설치 토큰의 환경과 같아야 합니다. 다운로드 서버에 대상 엔진과 checksum이 게시되고 해당 플랫폼이 허용되어 있어야 setup이 완료됩니다. Web은 `wasm32-emscripten` archive와 checksum을 사용합니다. `.sdk/`는 Git에서 제외하며, 버전을 변경할 때는 네 예제의 `scripts/audio-sdk-release.json`과 웹·모바일·데스크톱 예제의 lockfile을 함께 갱신합니다.
 
-설치 회귀 검증은 저장소 루트에서 `node --test tests/setup-sdk.test.mjs`로 실행합니다. 앱 검증은 Web·Mobile의 `npm run verify:pre-commit`, Desktop의 `npm run typecheck && npm test && npm run build`를 각각 사용합니다.
+설치 회귀 검증은 저장소 루트에서 `node --test tests/setup-sdk.test.mjs`로 실행합니다. 앱 검증은 Web·Mobile·Flutter의 `npm run verify:pre-commit`, Desktop의 `npm run typecheck && npm test && npm run build`를 각각 사용합니다.
 
-CI는 `.github/workflows/examples.yml` 하나입니다. secret 없이 모든 PR과 `main`·`v2` push에서 실행합니다. 설치 회귀 테스트와, 세 예제 각각의 고정 SDK 준비·타입 검사·단위 테스트·빌드를 돌리고, 표지용 키로 빌드해 API 키가 앱(웹 bundle, Expo 설정, 데스크톱 `dist/`)에 들어가지 않는지 확인합니다. 엔진 설치는 설치 토큰이 필요하므로 CI는 SDK의 JavaScript 패키지만 사용합니다. 실제 엔진을 쓰는 검증(시뮬레이터·에뮬레이터 probe, 데스크톱 엔진 smoke)은 각 예제 README의 명령으로 로컬에서 실행합니다.
+CI는 `.github/workflows/examples.yml` 하나입니다. secret 없이 모든 PR과 `main`·`v2` push에서 실행합니다. 설치 회귀 테스트와, 웹·모바일·데스크톱 예제 각각의 고정 SDK 준비·타입 검사·단위 테스트·빌드, Flutter 예제의 고정 SDK 준비·`flutter analyze`·`flutter test`·스크립트 테스트를 돌리고, 표지용 키로 API 키가 앱(웹 bundle, Expo 설정, 데스크톱 `dist/`, Flutter `.dart-defines.json`)에 들어가지 않는지 확인합니다. 엔진 설치는 설치 토큰이 필요하므로 CI는 SDK의 JavaScript 패키지와 Flutter plugin의 Dart 패키지만 사용합니다. 실제 엔진을 쓰는 검증(시뮬레이터·에뮬레이터 probe, Flutter integration test, 데스크톱 엔진 smoke)은 각 예제 README의 명령으로 로컬에서 실행합니다.
 
 ## API contract
 
@@ -90,13 +93,14 @@ only the token. Whatever a client holds can be read by its user: a key in a web
 bundle by anyone who opens the page, a key in a mobile or desktop app by anyone
 who has the app.
 
-The three examples follow this structure, with their development server in
+The examples follow this structure, with their development server in
 the place of your backend. None of them holds the API key:
 
 | Example | Who holds the API key | REST calls | WebSockets |
 | --- | --- | --- | --- |
 | Web | The Vite development server (`npm run dev`, `npm run preview`) | The browser calls the development server, which adds the API key | Access token in `token=` (a browser cannot set WebSocket headers) |
 | Mobile | The Expo (Metro) development server on your computer | The app calls the development server over the local network, which adds the API key | Access token in the `Authorization` header |
+| Flutter | The Node development server that `npm start` runs next to `flutter run` | The app calls the development server over the local network, which adds the API key | Access token in the `Authorization` header |
 | Desktop | The Vite development server that `npm run dev` starts | The Electron main process calls the development server, which adds the API key | Access token in the `Authorization` header |
 
 The development server forwards exactly four calls (create, settings, access
@@ -106,7 +110,8 @@ token, end) and nothing else the key could do, and only from this computer
 Wi-Fi, in `TELLUS_EXAMPLE_API_CLIENTS`. Beyond that address check the server
 does not know who is calling it. A real backend checks its own login first. A build
 that does not run against the development server (the static web `dist/`, a
-packaged desktop app, a mobile build without Metro) cannot start a session until
+packaged desktop app, a mobile build without Metro, a Flutter build without its
+Node server) cannot start a session until
 it is pointed at a backend that provides the same four routes; see each
 example's README.
 

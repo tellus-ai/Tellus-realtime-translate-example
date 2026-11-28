@@ -1,6 +1,6 @@
 # 모바일 실시간 번역 예제
 
-Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile` 0.3.13이 OS 캡처, Rust DSP·DeepFilterNet3 denoise·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/v1/audio`로 전달한다. 서버 호출은 모두 `/v1` 경로를 사용한다.
+Expo 55 / React Native 0.83.9 개발 앱이다. `@tellus-ai/audio-sdk-mobile` 0.3.15이 OS 캡처, Rust DSP·DeepFilterNet3 denoise·Silero VAD·Opus 인코딩을 처리한다. 앱은 인코딩된 payload와 gate 이벤트만 `/v1/audio`로 전달한다. 서버 호출은 모두 `/v1` 경로를 사용한다.
 
 ```sh
 cp .env.example .env
@@ -10,11 +10,11 @@ npm run ios
 # 또는 npm run android
 ```
 
-`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인하고 공개 SDK 0.3.13의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 Expo 개발 서버가 런타임에 쓰는 키이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정하며, 없으면 `REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, staging 기본 주소 순서로 선택한다.
+`npm run setup`은 `TELLUS_AUDIO_ENGINE_TOKEN`을 먼저 확인하고 공개 SDK 0.3.15의 고정 커밋을 `.sdk/`에 준비·빌드한 뒤 `.env` 설정을 전달해 `npm ci --legacy-peer-deps`, SDK 설치기, 바이너리 검사를 순서대로 실행한다. 의존성 설치는 기존 lockfile과 CI의 peer dependency 설정을 따른다. 기본 설치 대상은 iOS와 Android이며 엔진·ONNX Runtime·암호화 모델 파일이 준비되었는지 확인한다. 설치 토큰이 없으면 의존성 설치 전에 종료한다. `API_KEY`는 Expo 개발 서버가 런타임에 쓰는 키이므로 설치 토큰을 대신하지 않는다. 설치 서버는 `TELLUS_AUDIO_DOWNLOAD_BASE_URL`로 지정하며, 없으면 `REALTIME_SPEECH_HTTP_URL`, `EXPO_PUBLIC_REALTIME_SPEECH_HTTP_URL`, staging 기본 주소 순서로 선택한다.
 
 `./dev.sh [start|ios|android]`도 SDK 또는 엔진 파일이 없으면 같은 setup을 실행한다. setup 이후 `npm run ios` 또는 `npm run android`로 SDK가 포함된 개발 앱을 빌드한다.
 
-Node.js 24와 Git이 필요하며 별도 SDK 폴더를 준비할 필요가 없다. `.sdk/platforms/mobile`의 SDK 0.3.13과 엔진 0.4.13을 사용한다. `.npmrc`의 `install-links=true`로 앱의 `node_modules`에 복사 설치한다. SDK installer가 플랫폼 binary와 `denoise.temc`, `vad.temc` 암호화 모델, 엔진 archive에 함께 들어 있는 ONNX Runtime(iOS `onnxruntime.xcframework`, Android `libonnxruntime.so`)을 준비해야 한다. ONNX Runtime을 CocoaPods나 Maven에서 따로 받지 않는다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 오디오 캡처 구현은 SDK에 위임하며 고객 앱에서는 React Native TypeScript API를 사용한다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
+Node.js 24와 Git이 필요하며 별도 SDK 폴더를 준비할 필요가 없다. `.sdk/platforms/mobile`의 SDK 0.3.15과 엔진 0.4.15을 사용한다. `.npmrc`의 `install-links=true`로 앱의 `node_modules`에 복사 설치한다. SDK installer가 플랫폼 binary와 `denoise.temc`, `vad.temc` 암호화 모델, 엔진 archive에 함께 들어 있는 ONNX Runtime(iOS `onnxruntime.xcframework`, Android `libonnxruntime.so`)을 준비해야 한다. ONNX Runtime을 CocoaPods나 Maven에서 따로 받지 않는다. iOS는 SDK resource bundle, Android는 SDK assets를 native reader가 사용한다. SDK Expo plugin이 마이크 권한과 Android 지원 ABI를 자동 생성하고 autolinking으로 SDK를 연결한다. 오디오 캡처 구현은 SDK에 위임하며 고객 앱에서는 React Native TypeScript API를 사용한다. Expo Go에는 SDK module이 없으므로 SDK가 포함된 개발 앱을 사용한다.
 
 `.sdk/`는 setup이 관리하는 로컬 빌드 캐시다. 다른 SDK 버전이 들어 있으면 삭제 후 `npm run setup`을 다시 실행한다. SDK를 갱신한 뒤 기존 iOS host를 사용하는 경우 Pods를 갱신하고 앱을 다시 빌드한다.
 
@@ -51,7 +51,7 @@ POST /__tellus/api/v1/conversations/{id}/end ───────────�
 ```
 
 - `scripts/conversation-api-middleware.cjs`가 서버 쪽이다. `metro.config.js`가 녹음 저장 middleware와 함께 Metro에 등록한다. 이 네 호출만 `REALTIME_SPEECH_HTTP_URL`로 전달하며 API 키를 붙인다. `/__tellus/api` 아래의 다른 경로는 `404`다. Tellus의 상태 코드와 본문을 그대로 돌려주고, Tellus에 연결하지 못하면 `502`, 15초 안에 응답이 없으면 `504`를 돌려준다. `npm run test:api-server`로 검사한다.
-- 앱은 이 호출에 자격 증명을 보내지 않고 `X-Tellus-Example-Api: 1` 헤더만 보낸다. middleware는 이 헤더가 있고 `Origin`이 없거나 자기 주소인 요청만 받는다. React Native의 fetch는 `Origin`을 보내지 않으므로 앱은 통과하고, 다른 웹 페이지는 거절된다.
+- 앱은 이 호출에 자격 증명을 보내지 않고 `X-Tellus-Example-Api: 1` 헤더만 보낸다. middleware는 이 헤더가 있고 `Origin`이 없거나 자기 주소인 요청만 받는다. React Native의 fetch는 `Origin`을 보내지 않으므로 앱은 통과하고, 다른 웹 페이지는 거절된다. 페이지의 `Origin`은 `localhost`나 IP 주소일 때만 자기 주소로 본다. 다른 도메인의 이름을 이 Mac으로 돌리는 DNS rebinding을 막기 위해서다.
 - 서버 주소는 녹음 다운로드와 같은 방법(React Native `SourceCode`의 HTTP(S) 번들 URL 또는 Expo `hostUri`)으로 찾는다. Metro 없이 실행하는 빌드에서는 `.env`의 `TELLUS_EXAMPLE_API_URL`에 같은 네 경로를 제공하는 서버 주소를 지정한다(예: `https://your-backend.example/tellus`). 둘 다 없으면 Start가 오류를 표시한다.
 - 입장권은 이 Conversation만 연다. `src/api/accessTokens.ts`가 현재 입장권을 보관하고, 남은 시간이 1분 이하일 때 요청을 받으면 새로 발급받는다. 재연결과, SDK가 `/v1/audio`에서 보내는 엔진 승인(`audio.authenticate`, `engine.renew`)마다 요청한다. 열린 socket은 입장권이 만료되어도 닫히지 않는다.
 
@@ -100,6 +100,6 @@ CI(`.github/workflows/examples.yml`)는 secret 없이 모든 PR에서 설치 회
 
 저장 위치는 **Expo 개발 서버를 실행하는 Mac의 `~/download`**이며, 현재 Mac에서는 `/Users/lucas/download`이다. iOS·Android에서 JS 번들을 제공하는 Metro 서버에 파일을 전송하고, `metro.config.js`의 저장 middleware가 소문자 `download` 폴더를 생성해 저장한다. 서버 주소는 React Native `SourceCode`의 HTTP(S) 번들 URL 또는 Expo `hostUri`에서 얻는다. 완료 후 Mac의 실제 저장 경로를 표시한다. 기존 파일은 덮어쓰지 않는다.
 
-이 기능은 로컬 Expo 개발 서버 연결이 필요하다. `metro.config.js` 변경 후에는 Metro를 재시작한다. 기기·시뮬레이터가 연결된 Mac에 저장하며, 서버 연결 또는 파일 저장에 실패하면 오류를 표시하고 재시도할 수 있게 녹음 데이터를 유지한다. 앱 내부나 기기의 Download 폴더로 우회 저장하지 않는다. 별도 다운로드 네이티브 모듈이나 저장소 권한은 사용하지 않는다.
+이 기능은 로컬 Expo 개발 서버 연결이 필요하다. 저장도 API 호출처럼 이 Mac(loopback)과 `TELLUS_EXAMPLE_API_CLIENTS`의 주소에서만 받는다. `metro.config.js` 변경 후에는 Metro를 재시작한다. 기기·시뮬레이터가 연결된 Mac에 저장하며, 서버 연결 또는 파일 저장에 실패하면 오류를 표시하고 재시도할 수 있게 녹음 데이터를 유지한다. 앱 내부나 기기의 Download 폴더로 우회 저장하지 않는다. 별도 다운로드 네이티브 모듈이나 저장소 권한은 사용하지 않는다.
 
 Pause/Resume과 재연결 전후에 캡처한 음성은 한 파일에 포함한다. 캡처하지 않은 일시정지·연결 중단 시간은 생략하며, 오류 종료 후에도 이미 캡처한 음성은 저장할 수 있다. 음성은 메모리에 보관하다 다음 Start 또는 앱 종료 시 지우므로 새 세션 시작 전에 다운로드한다.

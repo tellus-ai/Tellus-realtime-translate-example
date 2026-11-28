@@ -1,9 +1,9 @@
 name: Example checks
 
 # Runs on every pull request and needs no secrets: the pinned public SDK, the unit tests, the type
-# checks, the builds, and the guarantee that the API key stays out of what each app ships. The native
-# engine is not installed here (that needs an installation token); check it locally with the
-# commands in each example's README.
+# checks (static analysis for Flutter), the builds, and the guarantee that the API key stays out of
+# what each app ships. The native engine is not installed here (that needs an installation token);
+# check it locally with the commands in each example's README.
 on:
   pull_request:
   push:
@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: '24'
       - name: Test standalone installation with local SDK fixtures
-        run: node --test tests/setup-sdk.test.mjs mobile/scripts/setup.test.mjs
+        run: node --test tests/setup-sdk.test.mjs mobile/scripts/setup.test.mjs flutter/scripts/setup.test.mjs
 
   app:
     name: ${{ matrix.app }}
@@ -102,3 +102,43 @@ jobs:
             echo "::error::API_KEY reached dist/, which electron-builder packages."
             exit 1
           fi
+
+  # Not in the matrix above: this example needs the Flutter SDK and has no npm dependencies to install.
+  flutter:
+    name: flutter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: flutter
+    env:
+      # Not a key. The last step fails if this value reaches what the app ships.
+      MARKER_API_KEY: tl_test_ci-marker-not-a-real-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Prepare the pinned public SDK
+        run: node ../.github/scripts/prepare-example-sdk.mjs .
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Analysis and tests
+        run: |
+          flutter analyze
+          flutter test
+          npm run test:scripts
+
+      # The development server holds the API key; the app only gets access tokens.
+      - name: The API key stays out of the values built into the app
+        run: |
+          API_KEY="$MARKER_API_KEY" node scripts/dart-defines.mjs
+          if grep -qF "$MARKER_API_KEY" .dart-defines.json; then
+            echo "::error::API_KEY reached .dart-defines.json, which is built into the app."
+            exit 1
+          fi
+          grep -qF '"TELLUS_API_KEY_CONFIGURED": "true"' .dart-defines.json

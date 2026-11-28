@@ -1,0 +1,12 @@
+{
+  "name": "tellus-realtime-translation-flutter-example",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "start": "node scripts/run.mjs",
+    "server": "node scripts/dev-server.mjs",
+    "test:scripts": "node --test \"scripts/*.test.mjs\" \"scripts/*.check.cjs\"",
+    "verify:pre-commit": "flutter analyze && flutter test && npm run test:scripts"
+  }
+}

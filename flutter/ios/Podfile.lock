@@ -1,0 +1,22 @@
+PODS:
+  - Flutter (1.0.0)
+  - tellus_audio_sdk (0.3.15):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - tellus_audio_sdk (from `.symlinks/plugins/tellus_audio_sdk/ios`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  tellus_audio_sdk:
+    :path: ".symlinks/plugins/tellus_audio_sdk/ios"
+
+SPEC CHECKSUMS:
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  tellus_audio_sdk: fc7b03f6a7cf138aa0ce0b2d4db114bd50290c0a
+
+PODFILE CHECKSUM: 00986e00c5b6d6add1b58978b94da0c123f6b8e8
+
+COCOAPODS: 1.16.2
