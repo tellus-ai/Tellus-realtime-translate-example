@@ -20,7 +20,7 @@ config.server.enhanceMiddleware = (middleware, server) => {
     // a device behind `adb reverse`) may spend the key, unless a device's address is listed here.
     allowedClients: process.env.TELLUS_EXAMPLE_API_CLIENTS ?? '',
   });
-  const downloads = createRecordingDownloadMiddleware();
+  const downloads = createRecordingDownloadMiddleware({ allowedClients: process.env.TELLUS_EXAMPLE_API_CLIENTS ?? '' });
   return (request, response, next) => conversationApi(request, response,
     () => downloads(request, response, () => metro(request, response, next)));
 };

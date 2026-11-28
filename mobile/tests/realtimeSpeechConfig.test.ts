@@ -105,3 +105,14 @@ it('disables SDK mode only when explicitly configured off', () => {
   expect(resolveAppSettings({ EXPO_PUBLIC_TELLUS_AUDIO_SDK_ENABLED: 'false' }).audioSdkEnabled).toBe(false);
   expect(resolveAppSettings({ TELLUS_AUDIO_SDK_ENABLED: 'true' }).audioSdkEnabled).toBe(true);
 });
+
+it('refuses to build when the API key or the installation token is pasted into a setting that ships in the app', () => {
+  const cases: Record<string, string>[] = [
+    { API_KEY: 'tl_test_MARKER-api-key', APP_ORIGIN: 'https://app.fixture.test/tl_test_MARKER-api-key' },
+    { TELLUS_AUDIO_ENGINE_TOKEN: 'MARKER-engine-token', TELLUS_EXAMPLE_API_URL: 'https://backend.fixture.test/?t=MARKER-engine-token' },
+  ];
+  for (const environment of cases) {
+    expect(() => resolveAppSettings(environment)).toThrow(/contains the value of/);
+    expect(publicConfig).not.toContain('MARKER');
+  }
+});

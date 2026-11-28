@@ -26,8 +26,8 @@ export default defineConfig(({ mode }) => {
       configurePreviewServer(server) { server.middlewares.use(conversationApi()); },
     }, {
       name: 'local-recording-downloads',
-      configureServer(server) { server.middlewares.use(createRecordingDownloadMiddleware()); },
-      configurePreviewServer(server) { server.middlewares.use(createRecordingDownloadMiddleware()); },
+      configureServer(server) { server.middlewares.use(createRecordingDownloadMiddleware({ allowedClients: env.TELLUS_EXAMPLE_API_CLIENTS ?? '' })); },
+      configurePreviewServer(server) { server.middlewares.use(createRecordingDownloadMiddleware({ allowedClients: env.TELLUS_EXAMPLE_API_CLIENTS ?? '' })); },
     }],
     test: {
       environment: 'node',

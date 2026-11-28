@@ -23,7 +23,7 @@ async function startTellus(t) {
     tellus.calls.push({ method: request.method, path: request.url, authorization: request.headers.authorization, body });
     const answer = tellus.answer(request);
     if (!answer) return; // Never answers.
-    response.writeHead(answer.status, { 'Content-Type': 'application/json' });
+    response.writeHead(answer.status, { 'Content-Type': 'application/json', ...answer.headers });
     response.end(answer.body);
   });
   t.after(() => close(tellus.server));
@@ -215,4 +215,38 @@ test('accepts calls only from this computer, unless TELLUS_EXAMPLE_API_CLIENTS l
   assert.equal((await callFrom(listed, '192.168.0.13')).status, 403);
   // Other paths still pass to the next handler, whoever calls.
   assert.equal((await callFrom(listed, '192.168.0.13', '/index.html')).status, 'next');
+});
+
+/** A POST with headers that fetch() does not let a caller set, such as Host. */
+function postAs(app, path, headers) {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(app + path, { method: 'POST', headers: { ...CALLER, ...headers } }, response => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    request.on('error', reject);
+    request.end('{}');
+  });
+}
+
+test('refuses a page on another domain that points its name at this computer (DNS rebinding)', async t => {
+  const { tellus, app } = await start(t);
+  const { port } = new URL(app);
+  // The browser sends that page's Origin, and Host carries the same name.
+  for (const host of [`rebind.example:${port}`, `127.0.0.1.nip.io:${port}`]) {
+    assert.equal(await postAs(app, '/__tellus/api/v1/access-tokens', { Host: host, Origin: `http://${host}` }), 403, host);
+  }
+  assert.deepEqual(tellus.calls, []);
+  // This server's own page, named by localhost or an IP address, is still accepted.
+  for (const host of [`localhost:${port}`, `[::1]:${port}`, `192.168.0.10:${port}`]) {
+    assert.equal(await postAs(app, '/__tellus/api/v1/access-tokens', { Host: host, Origin: `http://${host}` }), 200, host);
+  }
+});
+
+test('does not follow a redirect from Tellus, so the key reaches no other route', async t => {
+  const { tellus, post } = await start(t);
+  tellus.answer = () => ({ status: 307, headers: { Location: '/v1/api-keys' }, body: '' });
+  const response = await post('/__tellus/api/v1/access-tokens', { body: '{}' });
+  assert.equal(response.status, 502);
+  assert.deepEqual(tellus.calls.map(call => call.path), ['/v1/access-tokens']);
 });
