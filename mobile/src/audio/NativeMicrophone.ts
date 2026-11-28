@@ -3,7 +3,7 @@ import { attachEngineAuthorization, type EngineAuthorizationController } from '@
 
 // Denoise starts off. When it is turned on, it runs in close_talk mode: a near-speech gate turns sound
 // that is not close to the microphone into silence (about 330 ms more delay, attenuation capped).
-// The values are the engine defaults (SDK 0.3.13 / engine 0.4.13), written out so they can be tuned.
+// The values are the engine defaults (SDK 0.3.15 / engine 0.4.15), written out so they can be tuned.
 export const DENOISE_SETTINGS = {
   denoiseMode: 'close_talk',
   closeTalkThresholdDb: 30,
