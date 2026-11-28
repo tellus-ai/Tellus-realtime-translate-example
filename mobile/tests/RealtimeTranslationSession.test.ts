@@ -1457,6 +1457,22 @@ describe('Audio SDK denoise controls', () => {
     expect(endRequests()).toHaveLength(0);
   });
 
+  it('unlocks the switch and Start when the session ends during a denoise change', async () => {
+    const { session, microphone, audioSocket } = await startSession();
+    const changing = gate();
+    microphone.setDenoiseEnabled = async (enabled) => { await changing.opened; microphone.denoiseEnabled = enabled; return enabled; };
+    const toggling = session.setDenoiseEnabled(!session.getSnapshot().denoise.enabled);
+    expect(session.getSnapshot().denoise.updating).toBe(true);
+    audioSocket.serverClose(1000, 'conversation_ended');
+    await flush();
+    changing.open();
+    await toggling;
+
+    expect(session.getSnapshot()).toMatchObject({ ...ENDED_BY_SERVER, denoise: { updating: false } });
+    await session.start({ sourceLanguage: 'ko-KR', targetLanguage: 'en-US', clientVad: false });
+    expect(session.getSnapshot().phase).toBe('recording');
+  });
+
   it('changes denoise while paused and preserves it for the next session', async () => {
     const { session, microphone } = await startSession();
     await session.pause();
